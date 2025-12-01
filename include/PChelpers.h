@@ -1,0 +1,7 @@
+#ifndef HELPERS_H
+#define HELPERS_H
+
+// INSERT FUNCTION DECLARATIONS HERE
+
+
+#endif
