@@ -16,6 +16,12 @@ uint64_t maxDonations[3];  // 3 highest total donations amounts (sum of all dona
                            // index 0 is the highest total donation
 charity_t charities[5]; // Global variable, one charity per index
 
+volatile int sigint = 0;
+
+void sigint_handler(int sig) {
+	sigint = 1;
+}
+
 int main(int argc, char *argv[]) {
 
     // Arg parsing
@@ -46,9 +52,20 @@ int main(int argc, char *argv[]) {
 	// initialize thread linked list
 	list_t * thread_list = init_T_List();		
 	// initialize log file 
+	int log_file_fd = open(log_filename, O_RDWR);
+	if (log_file_fd == -1) {
+		exit(2);
+	}
 	// signal handler
+	struct sigaction myaction = {{0}};
+	myaction.sa_handler = sigint_handler;
+
+	if (sigaction(SIGINT, &myaction, NULL) == -1) {
+		printf("signal handler failed to install\n");
+	}
 	// synchronization locks
-	
+	sem_t mutex_stat = 1, mutex_stat_w = 1, mutex_char = 1, mutex_char_w = 1, mutex_dlog = 1;
+	int stat_r_cnt = 0, char_r_cnt = 1;
 
     // Initiate server socket for listening
     int listen_fd = socket_listen_init(port_number);
@@ -66,6 +83,8 @@ int main(int argc, char *argv[]) {
         }
 
         // INSERT SERVER ACTIONS FOR CONNECTED CLIENT CODE HERE
+	// join on all threads
+	
 		//block sigint?
 		//create thread
 		//add thread id to linked list
