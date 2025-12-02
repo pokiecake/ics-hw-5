@@ -2,6 +2,8 @@
 #include "protocol.h"
 #include <pthread.h>
 #include <signal.h>
+#include "linkedlist.h"
+#include "MThelpers.h"
 
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
 
@@ -34,9 +36,19 @@ int main(int argc, char *argv[]) {
     unsigned int port_number = atoi(argv[1]);
     char *log_filename = argv[2];
 
-
     // INSERT SERVER INITIALIZATION CODE HERE
-
+	//initialize data structures
+	clientCnt = 0;
+	int i = 0;
+	for (i = 0; i < 3; i++)
+		maxDonations[i] = 0;
+		
+	// initialize thread linked list
+	list_t * thread_list = init_T_List();		
+	// initialize log file 
+	// signal handler
+	// synchronization locks
+	
 
     // Initiate server socket for listening
     int listen_fd = socket_listen_init(port_number);
