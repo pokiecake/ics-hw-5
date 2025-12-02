@@ -11,6 +11,18 @@
 
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
 
+//!!Remove during testing!!
+#define DEBUG
+// synchronization locks
+sem_t mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog;
+/*
+mutex_stat - lock for stat_r_cnt
+mutex_stat_w - writers stick for server statistics
+mutex_char - lock for char_r_cnt (readers count for charity stats)
+mutex_char_w - writers stick for charity data structures
+mutex_dlog - lock for log file
+*/
+int stat_r_cnt = 0, char_r_cnt = 0;
 /***********************************************************************************************/
 
 // Global variables, statistics collected since server start-up
@@ -23,13 +35,14 @@ charity_t charities[5]; // Global variable, one charity per index
 volatile int sigint = 0;
 
 void sigint_handler(int sig) {
+	//#ifdef DEBUG
+	write(STDOUT_FILENO, "sigint raised\n", 15);
+	//#endif
 	sigint = 1;
 }
-// synchronization locks
-sem_t mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog;
-int stat_r_cnt = 0, char_r_cnt = 0;
 
 int main(int argc, char *argv[]) {
+	
 
     // Arg parsing
     int opt;
@@ -60,18 +73,19 @@ int main(int argc, char *argv[]) {
 	int i = 0;
 	for (i = 0; i < 3; i++)
 		maxDonations[i] = 0;
-		
+	
 	// initialize thread linked list
 	list_t * thread_list = init_T_List();		
 	// initialize log file 
-	int log_file_fd = open(log_filename, O_RDWR | O_CREAT);
+	int log_file_fd = open(log_filename, O_WRONLY | O_CREAT);
+	//O_RDWR produces bugs??? (blocks file form RDWR)
 	if (log_file_fd == -1) {
 		fprintf(stderr, "File could not open\n");
 		exit(2);
 	}
 	// signal handler
 	struct sigaction myaction = {{0}};
-	myaction.sa_handler = sigint_handler;
+	myaction.sa_handler = &sigint_handler;
 
 	if (sigaction(SIGINT, &myaction, NULL) == -1) {
 		printf("signal handler failed to install\n");
@@ -85,25 +99,49 @@ int main(int argc, char *argv[]) {
 
     while(1) {
         // Wait and Accept the connection from client
-		#ifdef DEBUG
-			printf("Waiting for client...", client_fd);
-		#endif
+		//#ifdef DEBUG
+			printf("Waiting for client...\n");
+		//#endif
         client_fd = accept(listen_fd, (SA*)&client_addr, &client_addr_len);
+		while (client_fd < 0 && sigint == 0) { //ignore signals that are not sigint
+			client_fd = accept(listen_fd, (SA*)&client_addr, &client_addr_len);
+		}
+		//printf("sigint flag raised: %d\n", sigint);
+		if (sigint == 1) {
+			#ifdef DEBUG
+			fprintf(stderr, "ERROR: Sigint raised\n");
+			#endif
+			//close listening socket 
+			close(listen_fd);
+			//kill all threads
+			
+			//join all threads
+			join_all_threads(thread_list);
+			//make sure threads finish tasks and updating stats
+			
+			//close log file
+			close(log_file_fd);
+			exit(EXIT_FAILURE);
+		}
         if (client_fd < 0) {
+			close(listen_fd); //for development
+			close(log_file_fd); //for development
             printf("server acccept failed\n");
             exit(EXIT_FAILURE);
         }
 		#ifdef DEBUG
-			printf("Listening on fd %d", client_fd);
+			printf("Listening on fd %d\n", client_fd);
 		#endif
         // INSERT SERVER ACTIONS FOR CONNECTED CLIENT CODE HERE
 		// join on all threads
 		join_threads(thread_list);	
+		//!!Thread id probably not removed from list entirely
 		//block sigint?
 		//create thread
 		pthread_t spawned_tid;
-		int * arg = malloc(sizeof(int));
+		int * arg = malloc(sizeof(int) * 2);
 		*arg = client_fd;
+		*(arg + 1) = log_file_fd;
 		pthread_create(&spawned_tid, NULL, thread, arg);
 		//add thread id to linked list
 		InsertAtHead(thread_list, (void *)spawned_tid);
@@ -162,24 +200,33 @@ int socket_listen_init(int server_port){
 const int MSG_SIZE = 32;
 void * thread(void * arg) {
 	//do we let the thread detach?
-	int clientfd = *((int *)arg);
+	int * fds = (int *)arg;
+	int clientfd = fds[0];
+	int log_fd = fds[1];
 	free(arg);
+	fds = NULL;
 	message_t * message = calloc(1, MSG_SIZE); 
-	#ifndef DEBUG
-		printf("Thread created, handling client %d", clientfd);
+	#ifdef DEBUG
+		printf("Thread created, handling client %d\n", clientfd);
 	#endif
+	uint64_t total_amnt = 0;
+	int logout = 0;
 	//read loop
-	while (true) {
+	while (logout != 1) {
 		read(clientfd, message, MSG_SIZE);
 		uint8_t msgtype = message->msgtype;
 		int ret; //error code for write
+		char * log_msg; //message for log file
 		switch(msgtype) {
 			//Donate
 			case 0x00:
+				#ifdef DEBUG
+					printf("%d handling Donate\n", clientfd);
+				#endif
 				//hold lock
 				P(&mutex_char_w);	
 				//Update donation amnt
-				add_donation_to_charity(message);
+				add_donation_to_charity(message, &total_amnt);
 				//release lock
 				V(&mutex_char_w);
 				//send msg !! 
@@ -187,10 +234,27 @@ void * thread(void * arg) {
 				if (ret < 0) {
 					//error, sending failed
 				}
+				uint8_t charity_i = message->msgdata.donation.charity;
+				uint64_t amnt = message->msgdata.donation.amount;
 				//log file !!
+				P(&mutex_dlog);
+				log_msg;
+				asprintf(&log_msg, "%d DONATE %u %lu\n", clientfd, charity_i, amnt);
+				//char msg[] = "DONATE";
+				// char charity_msg = 
+				// ltostr(charity_i, charity_msg);
+				// "%d DONATE %u %ul\n";
+				write(log_fd, log_msg, strlen(log_msg));
+				//fprintf(log_fd, "%d DONATE %u %ul\n", clientfd, charity_i, amnt);
+				V(&mutex_dlog);
 				break;
 			//CINFO
 			case 0x01:
+				#ifdef DEBUG
+					printf("%d handling Cinfo\n", clientfd);
+				#endif
+				//read data into buffer
+				uint8_t req_charity_i = get_charity_info(message); //todo!!
 				//hold charity lock
 				P(&mutex_char);
 				char_r_cnt ++;
@@ -198,10 +262,8 @@ void * thread(void * arg) {
 					P(&mutex_char_w);
 				}
 				V(&mutex_char);
-				//read data into buffer
-				uint8_t req_charity_i = get_charity_info(message); //todo!!
-				charity_t * req_charity = charities + req_charity_i;
-				//What the fuck am I supposed to send?
+				//charity_t * req_charity = charities + req_charity_i;
+				message->msgdata.charityInfo = charities[req_charity_i];
 				//release lock
 				P(&mutex_char);
 				char_r_cnt --;
@@ -213,11 +275,22 @@ void * thread(void * arg) {
 				ret = write(clientfd, message, MSG_SIZE);
 				if (ret < 0) {
 					//error, sending failed
+					
 				}
 				//log file
+				P(&mutex_dlog);
+				//char msg[] = "%d CINFO %u\n";
+				log_msg;
+				asprintf(&log_msg, "%d CINFO %u\n", clientfd, req_charity_i);
+				write(log_fd, log_msg, strlen(log_msg));
+				//fprintf(log_fd, "%d CINFO %u\n", clientfd, req_charity_i);
+				V(&mutex_dlog);
 				break;
 			//TOP
 			case 0x02:
+				#ifdef DEBUG
+					printf("%d handling Top\n", clientfd);
+				#endif
 				//hold server lock
 				P(&mutex_stat);
 				stat_r_cnt ++;
@@ -225,8 +298,14 @@ void * thread(void * arg) {
 					P(&mutex_stat_w);
 				}
 				V(&mutex_stat);
+				#ifdef DEBUG
+					printf("\t%d takes mutex_stat_w writers stick\n", clientfd);
+				#endif
 				//read donation amounts
 				write_max_donations(message, maxDonations); //todo!!
+				#ifdef DEBUG
+					printf("\t%d copied max donations\n", clientfd);
+				#endif
 				//release server lock
 				P(&mutex_stat);
 				stat_r_cnt --;
@@ -234,22 +313,54 @@ void * thread(void * arg) {
 					V(&mutex_stat_w);
 				}
 				V(&mutex_stat);
+				#ifdef DEBUG
+					printf("\t%d released mutex_stat_w writers stick\n", clientfd);
+				#endif
 				//send msg
+				write(clientfd, message, MSG_SIZE);
+				#ifdef DEBUG
+					printf("\t%d has written to client and preparting log\n", clientfd);
+				#endif
 				//log file
+				P(&mutex_dlog);
+				log_msg;
+				asprintf(&log_msg, "%d TOP\n", clientfd);
+				write(log_fd, log_msg, strlen(log_msg));
+				//fprintf(log_fd, "%d TOP\n", clientfd);
+				V(&mutex_dlog);
 				break;
 			//LOGOUT
 			case 0x03:
+				#ifdef DEBUG
+					printf("%d handling Logout\n", clientfd);
+				#endif
 				//close socket
 				close(clientfd);
 				//log file
+				P(&mutex_dlog);
+				log_msg;
+				asprintf(&log_msg, "%d LOGOUT\n", clientfd);
+				write(log_fd, log_msg, strlen(log_msg));
+				//fprintf(log_fd, "%d LOGOUT\n", clientfd);
+				V(&mutex_dlog);
 				//update max donations
+				P(&mutex_stat_w);
+				update_highest_dono(total_amnt, maxDonations, 3);
+				V(&mutex_stat_w);
+				logout = 1;
 				break;
 			//ERROR
 			case 0xFF:
+				#ifdef DEBUG
+					printf("%d has errored\n", clientfd);
+				#endif
 				//send msg
 				//log file
 				break;
 		}
 	}
+
+	
+	free(message);
 	return NULL;
 }
