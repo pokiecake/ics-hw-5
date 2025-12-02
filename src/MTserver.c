@@ -4,6 +4,10 @@
 #include <signal.h>
 #include "linkedlist.h"
 #include "MThelpers.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <semaphore.h>
 
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
 
@@ -64,9 +68,13 @@ int main(int argc, char *argv[]) {
 		printf("signal handler failed to install\n");
 	}
 	// synchronization locks
-	sem_t mutex_stat = 1, mutex_stat_w = 1, mutex_char = 1, mutex_char_w = 1, mutex_dlog = 1;
+	sem_t mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog;
 	int stat_r_cnt = 0, char_r_cnt = 1;
-
+	sem_init(&mutex_stat, 0, 1);
+	sem_init(&mutex_stat_w, 0, 1);
+	sem_init(&mutex_char, 0, 1);
+	sem_init(&mutex_char_w, 0, 1);
+	sem_init(&mutex_dlog, 0, 1);
     // Initiate server socket for listening
     int listen_fd = socket_listen_init(port_number);
     printf("Currently listening on port: %d.\n", port_number);

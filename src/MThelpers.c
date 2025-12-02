@@ -3,7 +3,10 @@
 #include <pthread.h>
 #include <signal.h>
 #include "MThelpers.h"
-#include <semaphor.h>
+#include <semaphore.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
 
 list_t * init_T_List() {
 	list_t * list = CreateList(&t_list_comparator, &t_list_printer, &t_list_deleter);
