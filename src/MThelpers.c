@@ -10,6 +10,9 @@
 #include <fcntl.h>
 #include <pthread.h>
 
+//!!Remove during testing!!
+#define DEBUG
+
 list_t * init_T_List() {
 	list_t * list = CreateList(&t_list_comparator, &t_list_printer, &t_list_deleter);
 	return list;	
@@ -62,4 +65,23 @@ void add_donation_to_charity(message_t * msg) {
 	}
 	//increment num of donations
 	req_charity->numDonations ++;
+}
+
+uint8_t get_charity_info(message_t * msg) {
+	return msg->msgdata.donation.charity;
+}
+
+void copy_charity(message_t * msg, charity_t * charity) {
+	charity_t * dest = &(msg->msgdata.charityInfo);
+	dest->totalDonationAmt = charity->totalDonationAmt;
+	dest->topDonation = charity->topDonation;
+	dest->numDonations = charity->numDonations;
+}
+
+void write_max_donations(message_t * msg, uint64_t maxDonations[]) {
+	uint64_t * dest = msg->msgdata.maxDonations;
+	int i;
+	for (i = 0; i < 3; i++) {
+		dest[i] = maxDonations[i];
+	}
 }

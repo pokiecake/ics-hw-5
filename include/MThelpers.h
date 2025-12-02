@@ -17,7 +17,8 @@ void V(sem_t * lock);
 void * thread (void *);
 
 void add_donation_to_charity(message_t * msg);
-charity_t * get_charity_info(message_t * msg);
-void write_max_donations(message_t * msg, uint64_t maxDonations[3]);
+uint8_t get_charity_info(message_t * msg);
+void copy_charity(message_t * msg, charity_t * charity);
+void write_max_donations(message_t * msg, uint64_t maxDonations[]);
 
 #endif

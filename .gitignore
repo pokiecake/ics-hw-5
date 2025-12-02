@@ -2,3 +2,5 @@
 bin/
 *.swp
 *.sh
+zotDonate_client
+*.txt

@@ -64,8 +64,9 @@ int main(int argc, char *argv[]) {
 	// initialize thread linked list
 	list_t * thread_list = init_T_List();		
 	// initialize log file 
-	int log_file_fd = open(log_filename, O_RDWR);
+	int log_file_fd = open(log_filename, O_RDWR | O_CREAT);
 	if (log_file_fd == -1) {
+		fprintf(stderr, "File could not open\n");
 		exit(2);
 	}
 	// signal handler
@@ -84,15 +85,20 @@ int main(int argc, char *argv[]) {
 
     while(1) {
         // Wait and Accept the connection from client
+		#ifdef DEBUG
+			printf("Waiting for client...", client_fd);
+		#endif
         client_fd = accept(listen_fd, (SA*)&client_addr, &client_addr_len);
         if (client_fd < 0) {
             printf("server acccept failed\n");
             exit(EXIT_FAILURE);
         }
-
+		#ifdef DEBUG
+			printf("Listening on fd %d", client_fd);
+		#endif
         // INSERT SERVER ACTIONS FOR CONNECTED CLIENT CODE HERE
-	// join on all threads
-	join_threads(thread_list);	
+		// join on all threads
+		join_threads(thread_list);	
 		//block sigint?
 		//create thread
 		pthread_t spawned_tid;
@@ -104,6 +110,7 @@ int main(int argc, char *argv[]) {
 
 		//unblock and check sigint
     }
+	close(log_file_fd);
 
     close(listen_fd);
     return 0;
@@ -158,78 +165,91 @@ void * thread(void * arg) {
 	int clientfd = *((int *)arg);
 	free(arg);
 	message_t * message = calloc(1, MSG_SIZE); 
+	#ifndef DEBUG
+		printf("Thread created, handling client %d", clientfd);
+	#endif
 	//read loop
 	while (true) {
-	read(clientfd, message, MSG_SIZE);
-	uint8_t msgtype = message->msgtype;
-	switch(msgtype) {
-		//Donate
-		case 0x00:
-			//hold lock
-			P(&mutex_char_w);	
-			//Update donation amnt
-			add_donation_to_charity(message);
-			//release lock
-			V(&mutex_char_w);
-			//send msg !! 
-			//log file !!
-			break;
-		//CINFO
-		case 0x01:
-			//hold charity lock
-			P(&mutex_char);
-			char_r_cnt ++;
-			if (char_r_cnt == 1) {
-				P(&mutex_char_w);
-			}
-			V(&mutex_char);
-			//read data into buffer
-			charity_t * req_charity = get_charity_info(message); //todo!!
-			//What the fuck am I supposed to send?
-			//release lock
-			P(&mutex_char);
-			char_r_cnt --;
-			if (char_r_cnt == 0) {
+		read(clientfd, message, MSG_SIZE);
+		uint8_t msgtype = message->msgtype;
+		int ret; //error code for write
+		switch(msgtype) {
+			//Donate
+			case 0x00:
+				//hold lock
+				P(&mutex_char_w);	
+				//Update donation amnt
+				add_donation_to_charity(message);
+				//release lock
 				V(&mutex_char_w);
-			}
-			V(&mutex_char);
-			//send msg w/ charity info
-			//log file
-			break;
-		//TOP
-		case 0x02:
-			//hold server lock
-			P(&mutex_stat);
-			stat_r_cnt ++;
-			if (stat_r_cnt == 1) {
-				P(&mutex_stat_w);
-			}
-			V(&mutex_stat);
-			//read donation amounts
-			write_max_donations(message, maxDonations); //todo!!
-			//release server lock
-			P(&mutex_stat);
-			stat_r_cnt --;
-			if (stat_r_cnt == 0) {
-				V(&mutex_stat_w);
-			}
-			V(&mutex_stat);
-			//send msg
-			//log file
-			break;
-		//LOGOUT
-		case 0x03:
-			//close socket
-			close(clientfd);
-			//log file
-			//update max donations
-			break;
-		//ERROR
-		case 0xFF:
-			//send msg
-			//log file
-			break;
-	}
+				//send msg !! 
+				ret = write(clientfd, message, MSG_SIZE);
+				if (ret < 0) {
+					//error, sending failed
+				}
+				//log file !!
+				break;
+			//CINFO
+			case 0x01:
+				//hold charity lock
+				P(&mutex_char);
+				char_r_cnt ++;
+				if (char_r_cnt == 1) {
+					P(&mutex_char_w);
+				}
+				V(&mutex_char);
+				//read data into buffer
+				uint8_t req_charity_i = get_charity_info(message); //todo!!
+				charity_t * req_charity = charities + req_charity_i;
+				//What the fuck am I supposed to send?
+				//release lock
+				P(&mutex_char);
+				char_r_cnt --;
+				if (char_r_cnt == 0) {
+					V(&mutex_char_w);
+				}
+				V(&mutex_char);
+				//send msg w/ charity info
+				ret = write(clientfd, message, MSG_SIZE);
+				if (ret < 0) {
+					//error, sending failed
+				}
+				//log file
+				break;
+			//TOP
+			case 0x02:
+				//hold server lock
+				P(&mutex_stat);
+				stat_r_cnt ++;
+				if (stat_r_cnt == 1) {
+					P(&mutex_stat_w);
+				}
+				V(&mutex_stat);
+				//read donation amounts
+				write_max_donations(message, maxDonations); //todo!!
+				//release server lock
+				P(&mutex_stat);
+				stat_r_cnt --;
+				if (stat_r_cnt == 0) {
+					V(&mutex_stat_w);
+				}
+				V(&mutex_stat);
+				//send msg
+				//log file
+				break;
+			//LOGOUT
+			case 0x03:
+				//close socket
+				close(clientfd);
+				//log file
+				//update max donations
+				break;
+			//ERROR
+			case 0xFF:
+				//send msg
+				//log file
+				break;
+		}
 	}
 	return NULL;
 }
