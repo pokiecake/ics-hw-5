@@ -1,2 +1,4 @@
 *checkpoint*
 bin/
+*.swp
+*.sh

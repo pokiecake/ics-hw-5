@@ -25,6 +25,9 @@ volatile int sigint = 0;
 void sigint_handler(int sig) {
 	sigint = 1;
 }
+// synchronization locks
+sem_t mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog;
+int stat_r_cnt = 0, char_r_cnt = 0;
 
 int main(int argc, char *argv[]) {
 
@@ -45,6 +48,11 @@ int main(int argc, char *argv[]) {
     }
     unsigned int port_number = atoi(argv[1]);
     char *log_filename = argv[2];
+	sem_init(&mutex_stat, 0, 1);
+	sem_init(&mutex_stat_w, 0, 1);
+	sem_init(&mutex_char, 0, 1);
+	sem_init(&mutex_char_w, 0, 1);
+	sem_init(&mutex_dlog, 0, 1);
 
     // INSERT SERVER INITIALIZATION CODE HERE
 	//initialize data structures
@@ -67,14 +75,6 @@ int main(int argc, char *argv[]) {
 	if (sigaction(SIGINT, &myaction, NULL) == -1) {
 		printf("signal handler failed to install\n");
 	}
-	// synchronization locks
-	sem_t mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog;
-	int stat_r_cnt = 0, char_r_cnt = 1;
-	sem_init(&mutex_stat, 0, 1);
-	sem_init(&mutex_stat_w, 0, 1);
-	sem_init(&mutex_char, 0, 1);
-	sem_init(&mutex_char_w, 0, 1);
-	sem_init(&mutex_dlog, 0, 1);
     // Initiate server socket for listening
     int listen_fd = socket_listen_init(port_number);
     printf("Currently listening on port: %d.\n", port_number);
@@ -92,11 +92,16 @@ int main(int argc, char *argv[]) {
 
         // INSERT SERVER ACTIONS FOR CONNECTED CLIENT CODE HERE
 	// join on all threads
-	
+	join_threads(thread_list);	
 		//block sigint?
 		//create thread
+		pthread_t spawned_tid;
+		int * arg = malloc(sizeof(int));
+		*arg = client_fd;
+		pthread_create(&spawned_tid, NULL, thread, arg);
 		//add thread id to linked list
-		
+		InsertAtHead(thread_list, (void *)spawned_tid);
+
 		//unblock and check sigint
     }
 
@@ -147,4 +152,84 @@ int socket_listen_init(int server_port){
     return sockfd;
 }
 
-
+const int MSG_SIZE = 32;
+void * thread(void * arg) {
+	//do we let the thread detach?
+	int clientfd = *((int *)arg);
+	free(arg);
+	message_t * message = calloc(1, MSG_SIZE); 
+	//read loop
+	while (true) {
+	read(clientfd, message, MSG_SIZE);
+	uint8_t msgtype = message->msgtype;
+	switch(msgtype) {
+		//Donate
+		case 0x00:
+			//hold lock
+			P(&mutex_char_w);	
+			//Update donation amnt
+			add_donation_to_charity(message);
+			//release lock
+			V(&mutex_char_w);
+			//send msg !! 
+			//log file !!
+			break;
+		//CINFO
+		case 0x01:
+			//hold charity lock
+			P(&mutex_char);
+			char_r_cnt ++;
+			if (char_r_cnt == 1) {
+				P(&mutex_char_w);
+			}
+			V(&mutex_char);
+			//read data into buffer
+			charity_t * req_charity = get_charity_info(message); //todo!!
+			//What the fuck am I supposed to send?
+			//release lock
+			P(&mutex_char);
+			char_r_cnt --;
+			if (char_r_cnt == 0) {
+				V(&mutex_char_w);
+			}
+			V(&mutex_char);
+			//send msg w/ charity info
+			//log file
+			break;
+		//TOP
+		case 0x02:
+			//hold server lock
+			P(&mutex_stat);
+			stat_r_cnt ++;
+			if (stat_r_cnt == 1) {
+				P(&mutex_stat_w);
+			}
+			V(&mutex_stat);
+			//read donation amounts
+			write_max_donations(message, maxDonations); //todo!!
+			//release server lock
+			P(&mutex_stat);
+			stat_r_cnt --;
+			if (stat_r_cnt == 0) {
+				V(&mutex_stat_w);
+			}
+			V(&mutex_stat);
+			//send msg
+			//log file
+			break;
+		//LOGOUT
+		case 0x03:
+			//close socket
+			close(clientfd);
+			//log file
+			//update max donations
+			break;
+		//ERROR
+		case 0xFF:
+			//send msg
+			//log file
+			break;
+	}
+	}
+	return NULL;
+}
