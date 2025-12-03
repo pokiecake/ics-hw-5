@@ -90,9 +90,7 @@ int main(int argc, char *argv[]) {
 	struct sigaction myaction = {{0}};
 	myaction.sa_handler = &sigint_handler;
 
-	if (sigaction(SIGINT, &myaction, NULL) == -1) {
-		printf("signal handler failed to install\n");
-	}
+	Sigaction(SIGINT, &myaction);
     // Initiate server socket for listening
     int listen_fd = socket_listen_init(port_number);
     printf("Currently listening on port: %d.\n", port_number);

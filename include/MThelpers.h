@@ -32,5 +32,7 @@ void Ftruncate(int log_file_fd);
 void P(sem_t * lock);
 void V(sem_t * lock);
 void * Calloc(size_t nelem, size_t elsize);
+//no need for old action for our purposes
+void Sigaction(int signal, const struct sigaction * act);
 
 #endif

@@ -172,6 +172,13 @@ void * Calloc(size_t nelem, size_t elsize) {
 	return ret;
 }
 
+void Sigaction(int signal, const struct sigaction * act) {
+	if (sigaction(signal, act, NULL) == -1) {
+		printf("signal handler failed to install\n");
+		exit(1);
+	}
+}
+
 // void ltostr(long num, char str[], int size) {
 // 	int i;
 // 	for (i = size - 1; i >= 0; --i) {
