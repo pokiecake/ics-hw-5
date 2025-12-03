@@ -220,9 +220,10 @@ void * thread(void * arg) {
 	int logout = 0;
 	//read loop
 	while (logout != 1) {
-		read(clientfd, message, MSG_SIZE);
-		uint8_t msgtype = message->msgtype;
 		int ret_err; //error ret_errvalues for functions
+		read(clientfd, message, MSG_SIZE);
+		//error checking for read
+		uint8_t msgtype = message->msgtype;
 		char * log_msg; //message for log file
 		switch(msgtype) {
 			//Donate
@@ -358,7 +359,6 @@ void * thread(void * arg) {
 				//fprintf(log_fd, "%d LOGOUT\n", clientfd);
 				V(&mutex_dlog);
 				//update max donations 
-				//!!first check if it is necessary first
 				P(&mutex_stat_w);
 				if (max_amnt > maxDonations[2]) {
 					update_highest_dono(max_amnt, maxDonations, 3);
