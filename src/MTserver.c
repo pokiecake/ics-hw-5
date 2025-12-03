@@ -28,6 +28,10 @@ mutex_char_w - writers stick for charity data structures
 mutex_dlog - lock for log file
 */
 int stat_r_cnt = 0, char_r_cnt = 0;
+/*
+stat_r_cnt = readers count for server statistics
+char_r_cnt = readers count for charity statstics
+*/
 /***********************************************************************************************/
 
 // Global variables, statistics collected since server start-up

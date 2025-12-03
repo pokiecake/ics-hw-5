@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "server.h"
 #include "protocol.h"
 #include <pthread.h>
@@ -7,6 +8,19 @@
 
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
 sem_t mutex_sigint, mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog;
+int stat_r_cnt, char_r_cnt;
+/*
+mutex_sigint = mutex locl for sigintflag
+mutex_stat = readers lock for server statistsics
+mutex_stat_w = writers lock for server statistics
+mutex_char = readers lock for charity data structs
+mutex_char_w = writers lock for charity data structs
+mutex_dlog = mutex lock for log file
+
+stat_r_cnt = readers count for server statistics
+char_r_cnt = readers count for charity data structs
+*/
+
 /***********************************************************************************************/
 
 // Global variables, statistics collected since server start-up
@@ -51,8 +65,8 @@ int main(int argc, char *argv[]) {
     // INSERT SERVER INITIALIZATION CODE HERE
 	//clientCnt = 0;
 	//Open log file
-	int log_file_fd = Open(log_filename, O_WRONLY | O_CREAT);
-	Ftruncate(log_file_fd);
+	int logfilefd = Open(log_filename, O_WRONLY | O_CREAT);
+	Ftruncate(logfilefd);
 	//sigaction sigint handler
 	struct sigaction myaction = {{0}};
 	myaction.sa_handler = &sigint_handler;
@@ -71,8 +85,9 @@ int main(int argc, char *argv[]) {
 	
     // CREATE WRITER THREAD HERE
 	pthread_t writer_tid;
-	int * writer_fds = malloc(sizeof(int) * 1);
-	writer_fds[0] = log_file_fd;
+	int * writer_fds = malloc(sizeof(int) * 2);
+	writer_fds[0] = logfilefd;
+	writer_fds[1] = socket_listen_init(w_port_number);
 	Pthread_create(&writer_tid, NULL, writer_thread, writer_fds);
 
     // Initiate server socket for listening for reader clients
@@ -87,6 +102,13 @@ int main(int argc, char *argv[]) {
         // Wait and Accept the connection from client
         reader_fd = accept(reader_listen_fd, (SA*)&client_addr, &client_addr_len);
 		//loop until sig int is called
+		while (reader_fd < 0 && sigintflag == 0) {
+			reader_fd = accept(reader_listen_fd, (SA*)&client_addr, &client_addr_len);
+		}
+		if (sigintflag == 1) {
+			kill_all_threads(thread_list, writer_tid);
+			break;
+		}
 		//join all threads on sig int
         if (reader_fd < 0) {
             printf("server acccept failed\n");
@@ -94,19 +116,23 @@ int main(int argc, char *argv[]) {
         }
         
         // INSERT SERVER ACTIONS FOR CONNECTED READER CLIENT CODE HERE
+		clientCnt++;
 		//check for terminated threads and join
-
+		join_threads(thread_list);
 		//spawn new reader thread
 		pthread_t reader_tid;
 		//give file descriptors as payload
 		int * fds = malloc(sizeof(int) * 2);
 		fds[0] = reader_fd;
-		fds[1] = log_file_fd;
+		fds[1] = logfilefd;
 		Pthread_create(&reader_tid, NULL, reader_thread, fds);
 		//insert into list
 		InsertAtHead(thread_list, &reader_thread);
     }
+	print_statistics(clientCnt, maxDonations);
+	print_all_charities(charities, 5);
 
+	close(logfilefd);
     close(reader_listen_fd);
     return 0;
 }
@@ -157,10 +183,99 @@ int socket_listen_init(int server_port){
 void * writer_thread(void * arg) {
 	int * fds = (int *)arg;
 	int logfilefd = fds[0];
+	int listenfd = fds[1];
 	free(arg);
-	char * logmsg = "Writer thread initialized\n";
-	write(logfilefd, logmsg, strlen(logmsg));
+	//char * logmsg = "Writer thread initialized\n";
+	//write(logfilefd, logmsg, strlen(logmsg));
+	message_t * msg = Calloc(1, sizeof(message_t));
+	char * logmsg;
+	uint64_t total_amnt = 0;
+	struct sockaddr_in client_addr;
+	unsigned int client_addr_len = sizeof(client_addr);
+	int reterr;
+	while (1) {
+		int clientfd = accept(listenfd, (SA *)&client_addr, &client_addr_len);
+		while(clientfd == -1 && sigintflag == 0) {
+			clientfd = accept(listenfd, (SA *)&client_addr, &client_addr_len);
+		}
+		if (sigintflag == 1) {
+			if (clientfd != -1) {
+				close(clientfd);
+			}
+			break;
+		}
+		int logout = 0;
+		while (logout == 0) {
+			read(clientfd, msg, sizeof(message_t));
+			while (errno == EINTR && sigintflag == 0) {
+				read(clientfd, msg, sizeof(message_t));
+			}
+			if (errno == EINTR && sigintflag == 1) {
+				close(clientfd);
+				break;
+			}
+			uint8_t msgtype = msg->msgtype;
+				
+			switch(msgtype) {
+				case DONATE:
+					//lock charities
+					P(&mutex_char_w);
+					//add donation to charity
+					reterr = add_donation_to_charity(msg, charities, 5); //TODO
+					//release charities
+					V(&mutex_char_w);
 	
+					if (reterr == -1) {
+						
+					}
+					//add to local total
+					total_amnt += msg->msgdata.donation.amount;
+					//send msg to client
+					write(clientfd, msg, sizeof(message_t));
+					//lock log
+					P(&mutex_dlog);
+					//log file
+					uint8_t charity_i = msg->msgdata.donation.charity;
+					uint64_t amnt = msg->msgdata.donation.amount;
+					asprintf(&logmsg, "%d DONATE %u %lu\n", clientfd, charity_i, amnt); //not thread safe?
+					write(logfilefd, logmsg, strlen(logmsg));
+					//release log
+					V(&mutex_dlog);
+					free(logmsg);
+				break;
+				case LOGOUT:
+					close(clientfd);
+					
+					P(&mutex_stat_w);
+					if (total_amnt > maxDonations[2]) {
+						update_highest_dono(total_amnt, maxDonations, 3); //TODO
+					}	
+					V(&mutex_stat_w);
+	
+					P(&mutex_dlog);
+					asprintf(&logmsg, "%d LOGOUT\n", clientfd);
+					write(logfilefd, logmsg, strlen(logmsg));
+					V(&mutex_dlog);
+					free(logmsg);
+					logout = 1;
+				break;
+				default:
+					send_err_msg(logfilefd, clientfd, &mutex_dlog, msg);
+					// write(clientfd, msg, sizeof(message_t));
+					// P(&mutex_dlog);
+					// asprintf(&logmsg, "%d ERROR\n", clientfd);
+					// write(logfilefd, logmsg, sizeof(logmsg));
+					// V(&mutex_dlog);
+					// free(logmsg);
+				break;
+				}
+		}
+		if (sigintflag == 1) {
+			break;
+		}
+	}
+	free(msg);		
+	close(listenfd);
 	return NULL;
 }
 
@@ -169,8 +284,117 @@ void * reader_thread(void * arg) {
 	int clientfd = fds[0];
 	int logfilefd = fds[1];
 	free(arg);
-	char * logmsg = "Reader thread initialized\n";
-	write(logfilefd, logmsg, strlen(logmsg));
+	//char * logmsg = "Reader thread initialized\n";
+	//write(logfilefd, logmsg, strlen(logmsg));
+	message_t * msg = Calloc(1, sizeof(message_t));
+	char * logmsg;
+	int logout = 0;
+	while (logout == 0) {
+		int reterr;
+		read(clientfd, msg, sizeof(message_t));
+		while (errno == EINTR && sigintflag == 0) {
+			reterr = read(clientfd, msg, sizeof(message_t));
+		}
+		if (errno == EINTR && sigintflag == 1) {
+			close(clientfd);
+			break;
+		}
+		uint8_t msgtype = msg->msgtype;
+		
+		switch(msgtype) {
+			case CINFO:
+				//read data into buffer
+				uint8_t req_charity_i = get_charity_info(msg);
+				//hold charity lock
+				P(&mutex_char);
+				char_r_cnt ++;
+				if (char_r_cnt == 1) {
+					P(&mutex_char_w);
+				}
+				V(&mutex_char);
+				//charity_t * req_charity = charities + req_charity_i;
+				msg->msgdata.charityInfo = charities[req_charity_i];
+				//release lock
+				P(&mutex_char);
+				char_r_cnt --;
+				if (char_r_cnt == 0) {
+					V(&mutex_char_w);
+				}
+				V(&mutex_char);
+				//send msg w/ charity info
+				reterr= write(clientfd, msg, sizeof(message_t));
+				if (reterr< 0) {
+					//error, sending failed
+					
+				}
+				//log file
+				P(&mutex_dlog);
+				//char msg[] = "%d CINFO %u\n";
+				asprintf(&logmsg, "%d CINFO %u\n", clientfd, req_charity_i);
+				write(logfilefd, logmsg, strlen(logmsg));
+				//fprintf(log_fd, "%d CINFO %u\n", clientfd, req_charity_i);
+				V(&mutex_dlog);
+				free(logmsg);
+			break;
+			case TOP:
+				//hold server lock
+				P(&mutex_stat);
+				stat_r_cnt ++;
+				if (stat_r_cnt == 1) {
+					P(&mutex_stat_w);
+				}
+				V(&mutex_stat);
+				//read donation amounts
+				write_max_donations(msg, maxDonations); //todo!!
+				//release server lock
+				P(&mutex_stat);
+				stat_r_cnt --;
+				if (stat_r_cnt == 0) {
+					V(&mutex_stat_w);
+				}
+				V(&mutex_stat);
+				
+				//send msg
+				write(clientfd, msg, sizeof(message_t));
+				
+				//hold log lock
+				P(&mutex_dlog);
+				//log file
+				asprintf(&logmsg, "%d TOP\n", clientfd);
+				write(logfilefd, logmsg, strlen(logmsg));
+				//release lock
+				V(&mutex_dlog);
+				//free asprintf buffer
+				free(logmsg);
+			break;
+			case LOGOUT:
+				//close connection
+				close(clientfd);
+
+				//hold log lock
+				P(&mutex_dlog);
+				//log file
+				asprintf(&logmsg, "%d LOGOUT\n", clientfd);
+				write(logfilefd, logmsg, strlen(logmsg));
+				//release lock
+				V(&mutex_dlog);
+				//free asprintf buffer
+				free(logmsg);
+				//set logout flag
+				logout = 1;
+			break;
+			case STATS:
+			break;
+			default: //ERROR
+				send_err_msg(logfilefd, clientfd, &mutex_dlog, msg);
+			break;
+		}
+		if (sigintflag == 1) {
+			break;
+		}
+	}
+
+	free(msg);
 
 	return NULL;
 }

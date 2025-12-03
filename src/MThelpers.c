@@ -108,7 +108,7 @@ void kill_all_threads(list_t * thread_list) {
 	node_t * cur = thread_list->head;
 	while(cur != NULL) {
 		pthread_t tid = *((pthread_t *)(cur->data));
-		pthread_kill(tid, SIGKILL); //possible problems with dead threads
+		pthread_kill(tid, SIGINT); //possible problems with dead threads
 		pthread_join(tid, NULL);
 		cur = cur->next;
 	}
