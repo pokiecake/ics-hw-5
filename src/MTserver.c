@@ -10,12 +10,16 @@
 #include <fcntl.h>
 #include <semaphore.h>
 
+/*TODO
+!!server statistics should only have one mutex
+*/
+
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
 
 //!!Remove during testing!!
 //#define DEBUG
 // synchronization locks
-sem_t mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog;
+sem_t mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog, mutex_sigint;
 /*
 mutex_stat - lock for stat_r_cnt
 mutex_stat_w - writers stick for server statistics
@@ -39,7 +43,9 @@ void sigint_handler(int sig) {
 	#ifdef DEBUG
 		write(STDOUT_FILENO, "sigint raised\n", 15);
 	#endif
+	P(&mutex_sigint);
 	sigint = 1;
+	V(&mutex_sigint);
 }
 
 int main(int argc, char *argv[]) {
@@ -147,7 +153,6 @@ int main(int argc, char *argv[]) {
 		//add thread id to linked list
 		InsertAtHead(thread_list, (void *)spawned_tid);
 
-		//unblock and check sigint
     }
 	//final output
 	print_all_charities(charities, 5);

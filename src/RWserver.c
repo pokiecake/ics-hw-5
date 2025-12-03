@@ -2,9 +2,11 @@
 #include "protocol.h"
 #include <pthread.h>
 #include <signal.h>
+#include "RWhelpers.h"
+#include "linkedlist.h"
 
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
-
+sem_t mutex_sigint, mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog;
 /***********************************************************************************************/
 
 // Global variables, statistics collected since server start-up
@@ -13,6 +15,16 @@ uint64_t maxDonations[3];  // 3 highest total donations amounts (sum of all dona
                            // charities in one connection), updated by client threads
                            // index 0 is the highest total donation
 charity_t charities[5]; // Global variable, one charity per index
+
+volatile int sigintflag = 0;
+
+void sigint_handler(int sig) {
+	P(&mutex_sigint);
+	sigintflag = 1;
+	V(&mutex_sigint);
+}
+void * writer_thread(void * arg);
+void * reader_thread(void * arg);
 
 int main(int argc, char *argv[]) {
 
@@ -37,8 +49,31 @@ int main(int argc, char *argv[]) {
 
 
     // INSERT SERVER INITIALIZATION CODE HERE
+	//clientCnt = 0;
+	//Open log file
+	int log_file_fd = Open(log_filename, O_WRONLY | O_CREAT);
+	Ftruncate(log_file_fd);
+	//sigaction sigint handler
+	struct sigaction myaction = {{0}};
+	myaction.sa_handler = &sigint_handler;
+	Sigaction(SIGINT, &myaction);
 
+	//mutex initialization
+	init_mutex(&mutex_sigint);
+	init_mutex(&mutex_stat);
+	init_mutex(&mutex_stat_w);
+	init_mutex(&mutex_char);
+	init_mutex(&mutex_char_w);
+	init_mutex(&mutex_dlog);
+
+	//thread id list
+	list_t * thread_list = init_T_List();
+	
     // CREATE WRITER THREAD HERE
+	pthread_t writer_tid;
+	int * writer_fds = malloc(sizeof(int) * 1);
+	writer_fds[0] = log_file_fd;
+	Pthread_create(&writer_tid, NULL, writer_thread, writer_fds);
 
     // Initiate server socket for listening for reader clients
     int reader_listen_fd = socket_listen_init(r_port_number); 
@@ -51,13 +86,25 @@ int main(int argc, char *argv[]) {
     while(1) {
         // Wait and Accept the connection from client
         reader_fd = accept(reader_listen_fd, (SA*)&client_addr, &client_addr_len);
+		//loop until sig int is called
+		//join all threads on sig int
         if (reader_fd < 0) {
             printf("server acccept failed\n");
             exit(EXIT_FAILURE);
         }
         
         // INSERT SERVER ACTIONS FOR CONNECTED READER CLIENT CODE HERE
+		//check for terminated threads and join
 
+		//spawn new reader thread
+		pthread_t reader_tid;
+		//give file descriptors as payload
+		int * fds = malloc(sizeof(int) * 2);
+		fds[0] = reader_fd;
+		fds[1] = log_file_fd;
+		Pthread_create(&reader_tid, NULL, reader_thread, fds);
+		//insert into list
+		InsertAtHead(thread_list, &reader_thread);
     }
 
     close(reader_listen_fd);
@@ -105,6 +152,27 @@ int socket_listen_init(int server_port){
         exit(EXIT_FAILURE);
     }
     return sockfd;
+}
+
+void * writer_thread(void * arg) {
+	int * fds = (int *)arg;
+	int logfilefd = fds[0];
+	free(arg);
+	char * logmsg = "Writer thread initialized\n";
+	write(logfilefd, logmsg, strlen(logmsg));
+	
+	return NULL;
+}
+
+void * reader_thread(void * arg) {
+	int * fds = (int *)arg;
+	int clientfd = fds[0];
+	int logfilefd = fds[1];
+	free(arg);
+	char * logmsg = "Reader thread initialized\n";
+	write(logfilefd, logmsg, strlen(logmsg));
+
+	return NULL;
 }
 
 
