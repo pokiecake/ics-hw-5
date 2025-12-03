@@ -365,6 +365,10 @@ void * thread(void * arg) {
 				logout = 1;
 				free(log_msg);
 				break;
+			case ERROR:
+				message->msgtype = ERROR;
+				send_err_msg(log_fd, clientfd, &mutex_dlog, message);
+				break;
 		}
 	}
 
