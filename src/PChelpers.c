@@ -39,6 +39,7 @@ void join_threads(list_t * list) {
 	}
 }
 
+//!!May not work if msgtype != DONATE
 uint8_t get_charity_info(message_t * msg) {
 	return msg->msgdata.donation.charity;
 }

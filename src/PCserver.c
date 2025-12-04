@@ -75,6 +75,9 @@ int main(int argc, char *argv[]) {
 	//initialize main thread tid
 	mainthread_id = pthread_self();
 
+	//initialize job buffer info
+	job_buffer.size = num_job_threads; //front and rear are already initialized to 0
+
 	//spawn job threads
 	int i;
 	for (int i = 0; i < num_job_threads; i++) {
@@ -199,8 +202,89 @@ void * thread_prod(void * arg) {
 }
 
 void * thread_cons(void * arg) {
+	pthread_t self_tid = pthread_self();
+	char * logmsg;
 	while (1) {
+		int reterr;
+		//hold items lock
 		P(&sem_job_items);
+		//hold job arr
+		P(&mutex_job);
+
+		//take the payload from the job buffer
+		job_t * payload = buffer + (job_buffer.front++) % job_buffer.size; //front points to the last used item
+		
+		//release locks
+		V(&mutex_job);
+		V(&sem_job_items);
+		
+		int client_fd = payload->fd;
+		message_t * msg = payload->msg;
+
+		switch(msg->msgtype) {
+			case DONATE:
+				//get address of the lock for the requested charity
+				sem_t * char_lock = mutex_charities[get_charity_info(msg)];
+				//lock requested charity
+				P(char_lock);
+				//add donation to charity
+				reterr = add_donation_to_charity(msg, charities, 5);
+				//release requested charity
+				V(char_lock);
+
+				if (reterr == -1) {
+					send_err_msg(logfile_fd, client_fd, &mutex_dlog, msg);
+					break;
+				}
+			
+				//send msg to client
+				write(client_fd, msg, sizeof(message_t));
+				//lock log
+				P(&mutex_dlog);
+				//log file
+				uint8_t charity_i = msg->msgdata.donation.charity;
+				uint64_t amnt = msg->msgdata.donation.amount;
+				asprintf(&logmsg, "&lu %d DONATE %u %lu\n", self_tid, client_fd, charity_i, amnt); //not thread safe?
+				write(logfile_fd, logmsg, strlen(logmsg));
+				//release log
+				V(&mutex_dlog);
+				free(logmsg);
+			break;
+			case CINFO:
+				//read data into buffer
+				uint8_t req_charity_i = get_charity_info(msg);
+				
+				sem_t * char_lock = mutex_charities[req_charity_i];
+				//lock requested charity
+				P(char_lock);
+				copy_charity(msg, charities + req_charity_i);
+				//release requested charity
+				V(char_lock);
+				
+				//send msg w/ charity info
+				reterr= write(client_fd, msg, sizeof(message_t));
+				if (reterr< 0) {
+					//error, sending failed
+					
+				}
+				//log file
+				P(&mutex_dlog);
+				//char msg[] = "%d CINFO %u\n";
+				asprintf(&logmsg, "%d CINFO %u\n", client_fd, req_charity_i);
+				write(logfile_fd, logmsg, strlen(logmsg));
+				//fprintf(log_fd, "%d CINFO %u\n", clientfd, req_charity_i);
+				V(&mutex_dlog);
+				free(logmsg);
+				
+			break;
+			case TOP:
+			break;
+			case LOGOUT:
+			break;
+			case ERROR:
+			break;
+		}
+		
 	}
 	return NULL;
 }
