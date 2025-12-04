@@ -4,7 +4,8 @@
 #include <signal.h>
 
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
-
+sem_t mutex_stat, sem_t mutex_stat_w, mutex_job_slots, mutex_job_items, mutex_job;
+sem_t mutex_charities[5];
 /***********************************************************************************************/
 
 // Global variables, statistics collected since server start-up
@@ -15,7 +16,13 @@ uint64_t maxDonations[3];  // 3 highest total donations amounts (sum of all dona
 charity_t charities[5];    // Global variable, one charity per index
 
 // Global variable for job buffer (connection between client and job threads)
-job_t buffer[5];           
+job_t buffer[5];
+
+int logfile_fd;
+
+void init_logfilefd();
+void init_mutexes();
+void init_sigint_handler();
 
 int main(int argc, char *argv[]) {
 
@@ -39,7 +46,15 @@ int main(int argc, char *argv[]) {
 
 
     // INSERT SERVER INITIALIZATION CODE HERE
-
+	//Open log file
+	init_logfilefd();
+	//mutex initialization
+	init_mutexes();
+	//sigaction sigint handler
+	init_sigint_handler();
+	
+	//thread id list
+	list_t * thread_list = init_T_List();
 
     // Initiate server socket for listening
     int listen_fd = socket_listen_init(port_number);
@@ -57,7 +72,7 @@ int main(int argc, char *argv[]) {
         }
 
         // INSERT SERVER ACTIONS FOR CONNECTED CLIENT CODE HERE
-
+		join_threads(thread_list);
     }
 
     close(listen_fd);
@@ -105,6 +120,30 @@ int socket_listen_init(int server_port){
         exit(EXIT_FAILURE);
     }
     return sockfd;
+}
+
+
+
+void init_logfilefd() {
+	//Open log file
+	logfile_fd = Open(log_filename, O_WRONLY | O_CREAT);
+	Ftruncate(logfile_fd);
+}
+
+void init_mutexes() {
+	//mutex initialization
+	init_mutex(&mutex_stat);
+	init_mutex(&mutex_stat_w);
+	init_mutex(&mutex_job_slots);
+	init_mutex(&mutex_job_items);
+	init_mutex(&mutex_job);
+}
+
+void init_sigint_handler() {
+	//sigaction sigint handler
+	struct sigaction myaction = {{0}};
+	myaction.sa_handler = &sigint_handler;
+	Sigaction(SIGINT, &myaction);
 }
 
 

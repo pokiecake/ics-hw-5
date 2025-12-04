@@ -7,10 +7,9 @@
 #include "linkedlist.h"
 
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
-sem_t mutex_sigint, mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog;
+sem_t mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog;
 int stat_r_cnt, char_r_cnt;
 /*
-mutex_sigint = mutex locl for sigintflag
 mutex_stat = readers lock for server statistsics
 mutex_stat_w = writers lock for server statistics
 mutex_char = readers lock for charity data structs
