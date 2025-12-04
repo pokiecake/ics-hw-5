@@ -3,6 +3,7 @@
 #include <pthread.h>
 #include <signal.h>
 
+//TODO vars for PC buffer
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
 sem_t mutex_stat, sem_t mutex_stat_w, mutex_job_slots, mutex_job_items, mutex_job;
 sem_t mutex_charities[5];
@@ -22,7 +23,12 @@ int logfile_fd;
 
 void init_logfilefd();
 void init_mutexes();
-void init_sigint_handler();
+void init_sigint_handler()
+void sigint_handler(int sig);
+void * thread_prod();
+void * thread_cons();
+
+volatile sigatomic_t sigint;
 
 int main(int argc, char *argv[]) {
 
@@ -37,12 +43,13 @@ int main(int argc, char *argv[]) {
     }
 
     // 3 positional arguments necessary
-    if (argc != 3) {
+    if (argc != 4) {
         fprintf(stderr, USAGE_MSG_MT);
         exit(EXIT_FAILURE);
     }
     unsigned int port_number = atoi(argv[1]);
     char *log_filename = argv[2];
+	int num_job_threads = argv[3];
 
 
     // INSERT SERVER INITIALIZATION CODE HERE
@@ -54,7 +61,13 @@ int main(int argc, char *argv[]) {
 	init_sigint_handler();
 	
 	//thread id list
-	list_t * thread_list = init_T_List();
+	list_t * prod_thread_list = init_T_List();
+	thread_t cons_thread_arr[num_job_threads]
+
+	//spawn job threads
+	for (int i = 0; i < num_job_threads; i++) {
+		Pthread_create(cons_thread_arr + i, NULL, thread_cons, NULL);
+	}
 
     // Initiate server socket for listening
     int listen_fd = socket_listen_init(port_number);
@@ -66,13 +79,24 @@ int main(int argc, char *argv[]) {
     while(1) {
         // Wait and Accept the connection from client
         client_fd = accept(listen_fd, (SA*)&client_addr, &client_addr_len);
+		//TODO loop when a signal is received
+		//TODO kill when sigint is received
         if (client_fd < 0) {
             printf("server acccept failed\n");
             exit(EXIT_FAILURE);
         }
 
         // INSERT SERVER ACTIONS FOR CONNECTED CLIENT CODE HERE
-		join_threads(thread_list);
+		join_threads(prod_thread_list);
+		//spawn prod thread
+		pthread_t tid;
+		int * arg = malloc(sizeof(int));
+		*arg = client_fd
+		Pthread_create(&tid, NULL, thread_prod, arg);
+		//increment client count
+		clientCnt++;
+		//insert thread into list
+		InsertAtHead(prod_thread_list, tid);
     }
 
     close(listen_fd);
@@ -122,6 +146,13 @@ int socket_listen_init(int server_port){
     return sockfd;
 }
 
+void * thread_prod() {
+
+}
+
+void * thread_cons() {
+	
+}
 
 
 void init_logfilefd() {
@@ -144,6 +175,10 @@ void init_sigint_handler() {
 	struct sigaction myaction = {{0}};
 	myaction.sa_handler = &sigint_handler;
 	Sigaction(SIGINT, &myaction);
+}
+
+void sigint_handler(int sig) {
+	sigint = 1;
 }
 
 
