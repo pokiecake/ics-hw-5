@@ -2,6 +2,7 @@
 #define HELPERS_H
 
 #include "linkedlist.h"
+#include <errno.h>
 #include <semaphore.h>
 
 // INSERT FUNCTION DECLARATIONS HERE

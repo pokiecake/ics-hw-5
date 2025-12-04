@@ -56,6 +56,31 @@ void write_max_donations(message_t * msg, uint64_t maxDonations[]) {
 	}
 }
 
+void update_high_low_charities(message_t * msg, charity_t charities[], size_t size) {
+	uint64_t high = 0, low = -1;
+	uint8_t high_ci, low_ci;
+	size_t i;
+	for (i = 0; i < size; i++){
+		charity_t * charity = charities + i;
+		if (charity->totalDonationAmt > high) {
+			high = charity->totalDonationAmt;
+			high_ci = i;
+		}
+		if (charity->totalDonationAmt < low) {
+			low = charity->totalDonationAmt;
+			low_ci = i;
+		}
+	}
+	set_high_low_charities(msg, high, low, high_ci, low_ci);
+}
+
+void set_high_low_charities(message_t * msg, uint64_t high, uint64_t low, uint8_t high_ci, uint8_t low_ci) {
+	msg->msgdata.stats.charityID_high = high_ci;
+	msg->msgdata.stats.charityID_low = low_ci;
+	msg->msgdata.stats.amount_high = high;
+	msg->msgdata.stats.amount_low = low;
+}
+
 void kill_all_threads(list_t * thread_list, pthread_t writer_tid){
 	
 	node_t * cur = thread_list->head;

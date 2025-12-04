@@ -47,9 +47,9 @@ void sigint_handler(int sig) {
 	#ifdef DEBUG
 		write(STDOUT_FILENO, "sigint raised\n", 15);
 	#endif
-	P(&mutex_sigint);
+	//P(&mutex_sigint);
 	sigint = 1;
-	V(&mutex_sigint);
+	//V(&mutex_sigint);
 }
 
 int main(int argc, char *argv[]) {
@@ -229,6 +229,12 @@ void * thread(void * arg) {
 	while (logout != 1) {
 		int ret_err; //error ret_errvalues for functions
 		read(clientfd, message, MSG_SIZE);
+		while (errno == EINTR && sigint == 0) {
+			read(clientfd, message, MSG_SIZE);
+		}
+		if (sigint == 1) {
+			break;
+		}
 		//error checking for read
 		uint8_t msgtype = message->msgtype;
 		char * log_msg; //message for log file
@@ -276,6 +282,10 @@ void * thread(void * arg) {
 				#endif
 				//read data into buffer
 				uint8_t req_charity_i = get_charity_info(message); //todo!!
+				if (req_charity_i < 0 || req_charity_i > 5) {
+					send_err_msg(log_fd, clientfd, &mutex_dlog, message);
+					break;
+				}
 				//hold charity lock
 				P(&mutex_char);
 				char_r_cnt ++;
@@ -378,6 +388,9 @@ void * thread(void * arg) {
 				message->msgtype = ERROR;
 				send_err_msg(log_fd, clientfd, &mutex_dlog, message);
 				break;
+		}
+		if (sigint == 1) {
+			break;
 		}
 	}
 

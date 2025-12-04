@@ -33,9 +33,9 @@ charity_t charities[5]; // Global variable, one charity per index
 volatile int sigintflag = 0;
 
 void sigint_handler(int sig) {
-	P(&mutex_sigint);
+	//P(&mutex_sigint);
 	sigintflag = 1;
-	V(&mutex_sigint);
+	//V(&mutex_sigint);
 }
 void * writer_thread(void * arg);
 void * reader_thread(void * arg);
@@ -291,12 +291,17 @@ void * reader_thread(void * arg) {
 	int logout = 0;
 	while (logout == 0) {
 		int reterr;
+		//get msg from client
 		read(clientfd, msg, sizeof(message_t));
+
+		//check sigint signal after block
 		while (errno == EINTR && sigintflag == 0) {
 			reterr = read(clientfd, msg, sizeof(message_t));
 		}
 		if (errno == EINTR && sigintflag == 1) {
-			close(clientfd);
+			if (clientfd == -1) {
+				close(clientfd);
+			}
 			break;
 		}
 		uint8_t msgtype = msg->msgtype;
@@ -384,6 +389,34 @@ void * reader_thread(void * arg) {
 				logout = 1;
 			break;
 			case STATS:
+				P(&mutex_char);
+				char_r_cnt++;
+				if (char_r_cnt == 1) {
+					P(&mutex_char_w);
+				}
+				V(&mutex_char);
+				update_high_low_charities(msg, charities, 5);
+				P(&mutex_char);
+				char_r_cnt--;
+				if (char_r_cnt == 0) {
+					V(&mutex_char_w);
+				}
+				V(&mutex_char);
+				
+				write(clientfd, msg, sizeof(message_t));
+
+				//create log msg
+				asprintf(&logmsg, "%d STATS %u:%lu %u:%lu\n", clientfd, 
+					msg->msgdata.stats.charityID_high,
+					msg->msgdata.stats.amount_high,
+					msg->msgdata.stats.charityID_low,
+					msg->msgdata.stats.amount_low);
+				//hold log lock
+				P(&mutex_dlog);
+				//log file
+				write(logfilefd, logmsg, strlen(logmsg));
+				//release lock
+				V(&mutex_dlog);
 			break;
 			default: //ERROR
 				send_err_msg(logfilefd, clientfd, &mutex_dlog, msg);
