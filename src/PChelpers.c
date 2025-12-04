@@ -1,7 +1,9 @@
+#define _GNU_SOURCE
 #include "server.h"
 #include "protocol.h"
 #include <pthread.h>
 #include <signal.h>
+#include "PChelpers.h"
 
 
 

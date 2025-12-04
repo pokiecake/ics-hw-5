@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <errno.h>
 #include "linkedlist.h"
 // INSERT FUNCTION DECLARATIONS HERE

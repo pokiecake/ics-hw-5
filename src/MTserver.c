@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
+
 #include <semaphore.h>
 
 /*TODO
@@ -41,7 +42,7 @@ uint64_t maxDonations[3];  // 3 highest total donations amounts (sum of all dona
                            // index 0 is the highest total donation
 charity_t charities[5]; // Global variable, one charity per index
 
-volatile sigtatomic_t sigint = 0;
+volatile sig_atomic_t sigint = 0;
 
 void sigint_handler(int sig) {
 	#ifdef DEBUG

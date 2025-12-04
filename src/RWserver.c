@@ -2,7 +2,6 @@
 #include "server.h"
 #include "protocol.h"
 #include <pthread.h>
-#include <signal.h>
 #include "RWhelpers.h"
 #include "linkedlist.h"
 
@@ -29,7 +28,7 @@ uint64_t maxDonations[3];  // 3 highest total donations amounts (sum of all dona
                            // index 0 is the highest total donation
 charity_t charities[5]; // Global variable, one charity per index
 
-volatile sigatomic_t sigintflag = 0;
+volatile sig_atomic_t sigintflag = 0;
 
 void sigint_handler(int sig) {
 	//P(&mutex_sigint);
@@ -72,7 +71,6 @@ int main(int argc, char *argv[]) {
 	Sigaction(SIGINT, &myaction);
 
 	//mutex initialization
-	init_mutex(&mutex_sigint);
 	init_mutex(&mutex_stat);
 	init_mutex(&mutex_stat_w);
 	init_mutex(&mutex_char);

@@ -4,6 +4,7 @@
 #include "linkedlist.h"
 #include <errno.h>
 #include <semaphore.h>
+#include <signal.h>
 
 // INSERT FUNCTION DECLARATIONS HERE
 list_t * init_T_List();

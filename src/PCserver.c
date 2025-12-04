@@ -1,11 +1,13 @@
+#define _GNU_SOURCE
 #include "server.h"
 #include "protocol.h"
+#include "PChelpers.h"
 #include <pthread.h>
-#include <signal.h>
+
 
 //TODO vars for PC buffer
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
-sem_t mutex_stat, sem_t mutex_stat_w, mutex_job_slots, mutex_job_items, mutex_job;
+sem_t mutex_stat, mutex_stat_w, mutex_job_slots, mutex_job_items, mutex_job;
 sem_t mutex_charities[5];
 /***********************************************************************************************/
 
@@ -23,12 +25,12 @@ int logfile_fd;
 
 void init_logfilefd();
 void init_mutexes();
-void init_sigint_handler()
+void init_sigint_handler();
 void sigint_handler(int sig);
 void * thread_prod();
 void * thread_cons();
 
-volatile sigatomic_t sigint;
+volatile sig_atomic_t sigint;
 
 int main(int argc, char *argv[]) {
 
@@ -49,12 +51,12 @@ int main(int argc, char *argv[]) {
     }
     unsigned int port_number = atoi(argv[1]);
     char *log_filename = argv[2];
-	int num_job_threads = argv[3];
+	int num_job_threads = atoi(argv[3]);
 
 
     // INSERT SERVER INITIALIZATION CODE HERE
 	//Open log file
-	init_logfilefd();
+	init_logfilefd(log_filename);
 	//mutex initialization
 	init_mutexes();
 	//sigaction sigint handler
@@ -62,9 +64,10 @@ int main(int argc, char *argv[]) {
 	
 	//thread id list
 	list_t * prod_thread_list = init_T_List();
-	thread_t cons_thread_arr[num_job_threads]
+	pthread_t cons_thread_arr[num_job_threads];
 
 	//spawn job threads
+	int i;
 	for (int i = 0; i < num_job_threads; i++) {
 		Pthread_create(cons_thread_arr + i, NULL, thread_cons, NULL);
 	}
@@ -91,12 +94,12 @@ int main(int argc, char *argv[]) {
 		//spawn prod thread
 		pthread_t tid;
 		int * arg = malloc(sizeof(int));
-		*arg = client_fd
+		*arg = client_fd;
 		Pthread_create(&tid, NULL, thread_prod, arg);
 		//increment client count
 		clientCnt++;
 		//insert thread into list
-		InsertAtHead(prod_thread_list, tid);
+		InsertAtHead(prod_thread_list, &tid);
     }
 
     close(listen_fd);
@@ -148,14 +151,16 @@ int socket_listen_init(int server_port){
 
 void * thread_prod() {
 
+	return NULL;
 }
 
 void * thread_cons() {
 	
+	return NULL;
 }
 
 
-void init_logfilefd() {
+void init_logfilefd(char * log_filename) {
 	//Open log file
 	logfile_fd = Open(log_filename, O_WRONLY | O_CREAT);
 	Ftruncate(logfile_fd);
