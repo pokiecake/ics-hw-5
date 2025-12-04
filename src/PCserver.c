@@ -7,10 +7,14 @@
 
 //TODO vars for PC buffer
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
-sem_t mutex_stat, mutex_stat_w, mutex_job_slots, mutex_job_items, mutex_job;
+sem_t mutex_stat, mutex_stat_w, sem_job_slots, sem_job_items, mutex_job, mutex_dlog;
 sem_t mutex_charities[5];
 /***********************************************************************************************/
-
+typedef struct {
+	int size;
+	int front;
+	int rear;
+} pcbuf;
 // Global variables, statistics collected since server start-up
 int clientCnt;  // # of client connections made, Updated by the main thread
 uint64_t maxDonations[3];  // 3 highest total donations amounts (sum of all donations to all  
@@ -20,15 +24,17 @@ charity_t charities[5];    // Global variable, one charity per index
 
 // Global variable for job buffer (connection between client and job threads)
 job_t buffer[5];
+pcbuf job_buffer;
 
 int logfile_fd;
+pthread_t mainthread_id;
 
 void init_logfilefd();
 void init_mutexes();
 void init_sigint_handler();
 void sigint_handler(int sig);
-void * thread_prod();
-void * thread_cons();
+void * thread_prod(void *);
+void * thread_cons(void *);
 
 volatile sig_atomic_t sigint;
 
@@ -65,6 +71,9 @@ int main(int argc, char *argv[]) {
 	//thread id list
 	list_t * prod_thread_list = init_T_List();
 	pthread_t cons_thread_arr[num_job_threads];
+
+	//initialize main thread tid
+	mainthread_id = pthread_self();
 
 	//spawn job threads
 	int i;
@@ -149,13 +158,50 @@ int socket_listen_init(int server_port){
     return sockfd;
 }
 
-void * thread_prod() {
+void * thread_prod(void * arg) {
+	//take client fd
+	int * fd = (int *)arg;
+	int clientfd = fd[0];
+	free(arg);
+	
+	//read msg from client
+	message_t * msg = malloc(sizeof(message_t));
+	read(clientfd, msg, sizeof(message_t));
+	//loop signals until sigint or error
+
+	//logout
+	if (msg->msgtype == LOGOUT) {
+		close(clientfd);
+		P(&mutex_dlog);
+		char * logmsg;
+		asprintf(&logmsg, "%lu %u LOGOUT\n", mainthread_id, clientfd);
+		write(logfile_fd, logmsg, strlen(logmsg));
+		V(&mutex_dlog);
+		return NULL;
+	}
+
+	job_t payload = {.fd = clientfd, .msg = *msg};
+
+	//hold a slot
+	P(&sem_job_slots);
+	//mutex job arr
+	P(&mutex_job);
+	//put message in job arr
+	buffer[((job_buffer.rear)++) % (job_buffer.size)] = payload;
+
+	//release job arr
+	V(&mutex_job);
+	//release a slot
+	V(&sem_job_slots);
+	
 
 	return NULL;
 }
 
-void * thread_cons() {
-	
+void * thread_cons(void * arg) {
+	while (1) {
+		P(&sem_job_items);
+	}
 	return NULL;
 }
 
@@ -170,9 +216,10 @@ void init_mutexes() {
 	//mutex initialization
 	init_mutex(&mutex_stat);
 	init_mutex(&mutex_stat_w);
-	init_mutex(&mutex_job_slots);
-	init_mutex(&mutex_job_items);
+	init_mutex(&sem_job_slots);
+	init_mutex(&sem_job_items);
 	init_mutex(&mutex_job);
+	init_mutex(&mutex_dlog);
 }
 
 void init_sigint_handler() {
