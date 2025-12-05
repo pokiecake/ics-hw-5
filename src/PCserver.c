@@ -4,10 +4,16 @@
 #include "PChelpers.h"
 #include <pthread.h>
 
+//TODO !!REMOVE DURING SUBMISSION
+//#define DEBUG
 
-//TODO vars for PC buffer
+/*TODO 
+update usage statement
+*/
+
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
 sem_t mutex_stat, mutex_stat_w, sem_job_slots, sem_job_items, mutex_job, mutex_dlog;
+int stat_r_cnt;
 sem_t mutex_charities[5];
 /***********************************************************************************************/
 typedef struct {
@@ -30,7 +36,7 @@ int logfile_fd;
 pthread_t mainthread_id;
 
 void init_logfilefd();
-void init_mutexes();
+void init_mutexes(int);
 void init_sigint_handler();
 void sigint_handler(int sig);
 void * thread_prod(void *);
@@ -56,15 +62,15 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
     unsigned int port_number = atoi(argv[1]);
-    char *log_filename = argv[2];
-	int num_job_threads = atoi(argv[3]);
+	int num_job_threads = atoi(argv[2]);
+    char *log_filename = argv[3];
 
 
     // INSERT SERVER INITIALIZATION CODE HERE
 	//Open log file
 	init_logfilefd(log_filename);
 	//mutex initialization
-	init_mutexes();
+	init_mutexes(num_job_threads);
 	//sigaction sigint handler
 	init_sigint_handler();
 	
@@ -81,7 +87,7 @@ int main(int argc, char *argv[]) {
 	//spawn job threads
 	int i;
 	for (int i = 0; i < num_job_threads; i++) {
-		Pthread_create(cons_thread_arr + i, NULL, thread_cons, NULL);
+		Pthread_create(&cons_thread_arr[i], NULL, thread_cons, NULL);
 	}
 
     // Initiate server socket for listening
@@ -94,9 +100,28 @@ int main(int argc, char *argv[]) {
     while(1) {
         // Wait and Accept the connection from client
         client_fd = accept(listen_fd, (SA*)&client_addr, &client_addr_len);
+			#ifdef DEBUG
+				printf("out of accept\n");
+			#endif
+		while (client_fd == -1 && sigint == 0) {
+			#ifdef DEBUG
+				printf("reconnecting\n");
+			#endif
+	        client_fd = accept(listen_fd, (SA*)&client_addr, &client_addr_len);
+		}
+		if (sigint == 1) {
+		    close(listen_fd);
+			#ifdef DEBUG
+				printf("killing threads\n");
+			#endif
+			kill_all_threads(prod_thread_list, cons_thread_arr, num_job_threads);
+			break;
+		}
 		//TODO loop when a signal is received
 		//TODO kill when sigint is received
         if (client_fd < 0) {
+		    close(listen_fd);
+			close(logfile_fd);
             printf("server acccept failed\n");
             exit(EXIT_FAILURE);
         }
@@ -114,7 +139,8 @@ int main(int argc, char *argv[]) {
 		InsertAtHead(prod_thread_list, &tid);
     }
 
-    close(listen_fd);
+    //close(listen_fd);
+	close(logfile_fd);
     return 0;
 }
 
@@ -162,6 +188,10 @@ int socket_listen_init(int server_port){
 }
 
 void * thread_prod(void * arg) {
+	pthread_t self_tid = pthread_self();
+	#ifdef DEBUG
+		printf("prod %lu created\n", self_tid);
+	#endif
 	//take client fd
 	int * fd = (int *)arg;
 	int clientfd = fd[0];
@@ -169,35 +199,65 @@ void * thread_prod(void * arg) {
 	
 	//read msg from client
 	message_t * msg = malloc(sizeof(message_t));
-	read(clientfd, msg, sizeof(message_t));
-	//loop signals until sigint or error
 
-	//logout
-	if (msg->msgtype == LOGOUT) {
-		close(clientfd);
-		P(&mutex_dlog);
-		char * logmsg;
-		asprintf(&logmsg, "%lu %u LOGOUT\n", mainthread_id, clientfd);
-		write(logfile_fd, logmsg, strlen(logmsg));
-		V(&mutex_dlog);
-		return NULL;
-	}
-
-	job_t payload = {.fd = clientfd, .msg = *msg};
-
-	//hold a slot
-	P(&sem_job_slots);
-	//mutex job arr
-	P(&mutex_job);
-	//put message in job arr
-	buffer[((job_buffer.rear)++) % (job_buffer.size)] = payload;
-
-	//release job arr
-	V(&mutex_job);
-	//release a slot
-	V(&sem_job_slots);
+	while (1) {
+		
+		int reterr = read(clientfd, msg, sizeof(message_t));
+		
+		//loop signals until sigint or error
+		while (errno == EINTR && sigint == 0) {
+			int reterr = read(clientfd, msg, sizeof(message_t));
+		}
+		if (sigint == 1) {
+			return NULL;
+		}
+		if (reterr < 0 && errno != EINTR) {
+			fprintf(stderr, "ERROR: Failed to read from client. Errno=%u\n", errno);
+			exit(1);
+		}
 	
-
+		//logout
+		if (msg->msgtype == LOGOUT) {
+			close(clientfd);
+			P(&mutex_dlog);
+			char * logmsg;
+			asprintf(&logmsg, "%lu %u LOGOUT\n", mainthread_id, clientfd);
+			write(logfile_fd, logmsg, strlen(logmsg));
+			V(&mutex_dlog);
+			return NULL;
+		}
+	
+		job_t payload = {.fd = clientfd, .msg = *msg};
+	
+		#ifdef DEBUG
+			printf("prod %lu checking slots\n", self_tid);
+		#endif
+		//hold a slot
+		P(&sem_job_slots);
+		if (sigint == 1) {
+			return NULL;
+		}
+		#ifdef DEBUG
+			printf("prod %lu holding buffer\n", self_tid);
+		#endif
+		//mutex job arr
+		P(&mutex_job);
+		if (sigint == 1) {
+			V(&sem_job_slots);
+			return NULL;
+		}
+		//put message in job arr
+		buffer[((job_buffer.rear)++) % (job_buffer.size)] = payload;
+	
+		//release job arr
+		#ifdef DEBUG
+			printf("prod %lu releasing locks\n", self_tid);
+		#endif
+		V(&mutex_job);
+		//announce item
+		V(&sem_job_items);
+		
+	}
 	return NULL;
 }
 
@@ -205,30 +265,54 @@ void * thread_cons(void * arg) {
 	pthread_t self_tid = pthread_self();
 	char * logmsg;
 	while (1) {
+		#ifdef DEBUG
+			printf("cons %lu checking items\n", self_tid);
+		#endif
 		int reterr;
 		//hold items lock
 		P(&sem_job_items);
+		if (sigint == 1) {
+			#ifdef DEBUG
+				printf("cons %lu exiting\n", self_tid);
+			#endif
+			break;
+		}
+		#ifdef DEBUG
+			printf("cons %lu holding onto buffer\n", self_tid);
+		#endif
 		//hold job arr
 		P(&mutex_job);
+		if (sigint == 1) {
+			V(&sem_job_items);
+			#ifdef DEBUG
+				printf("cons %lu exiting\n", self_tid);
+			#endif
+			break;
+		}
+		#ifdef DEBUG
+			printf("cons %lu found item\n", self_tid);
+		#endif
 
 		//take the payload from the job buffer
 		job_t * payload = buffer + (job_buffer.front++) % job_buffer.size; //front points to the last used item
 		
-		//release locks
+		//release lock
 		V(&mutex_job);
-		V(&sem_job_items);
+		//anounce slot
+		V(&sem_job_slots);
 		
 		int client_fd = payload->fd;
-		message_t * msg = payload->msg;
+		message_t * msg = &(payload->msg);
+		sem_t * char_lock;
 
 		switch(msg->msgtype) {
 			case DONATE:
 				//get address of the lock for the requested charity
-				sem_t * char_lock = mutex_charities[get_charity_info(msg)];
+				char_lock = &mutex_charities[get_charity_info(msg)];
 				//lock requested charity
 				P(char_lock);
 				//add donation to charity
-				reterr = add_donation_to_charity(msg, charities, 5);
+				reterr = add_donation_to_charity(msg, charities, 5, maxDonations);
 				//release requested charity
 				V(char_lock);
 
@@ -244,20 +328,19 @@ void * thread_cons(void * arg) {
 				//log file
 				uint8_t charity_i = msg->msgdata.donation.charity;
 				uint64_t amnt = msg->msgdata.donation.amount;
-				asprintf(&logmsg, "&lu %d DONATE %u %lu\n", self_tid, client_fd, charity_i, amnt); //not thread safe?
+				asprintf(&logmsg, "%lu %d DONATE %u %lu\n", self_tid, client_fd, charity_i, amnt); //not thread safe?
 				write(logfile_fd, logmsg, strlen(logmsg));
 				//release log
 				V(&mutex_dlog);
 				free(logmsg);
 			break;
 			case CINFO:
-				//read data into buffer
 				uint8_t req_charity_i = get_charity_info(msg);
+				char_lock = &mutex_charities[req_charity_i];
 				
-				sem_t * char_lock = mutex_charities[req_charity_i];
 				//lock requested charity
 				P(char_lock);
-				copy_charity(msg, charities + req_charity_i);
+				copy_charity(msg, &charities[req_charity_i]);
 				//release requested charity
 				V(char_lock);
 				
@@ -278,10 +361,37 @@ void * thread_cons(void * arg) {
 				
 			break;
 			case TOP:
+				//hold server lock
+				P(&mutex_stat);
+				stat_r_cnt ++;
+				if (stat_r_cnt == 1) {
+					P(&mutex_stat_w);
+				}
+				V(&mutex_stat);
+				//read donation amounts
+				write_max_donations(msg, maxDonations); //todo!!
+				//release server lock
+				P(&mutex_stat);
+				stat_r_cnt --;
+				if (stat_r_cnt == 0) {
+					V(&mutex_stat_w);
+				}
+				V(&mutex_stat);
+				//send msg
+				write(client_fd, msg, sizeof(message_t));
+				
+				//log file
+				P(&mutex_dlog);
+				asprintf(&logmsg, "%d TOP\n", client_fd);
+				write(logfile_fd, logmsg, strlen(logmsg));
+				//fprintf(log_fd, "%d TOP\n", clientfd);
+				V(&mutex_dlog);
+				free(logmsg);
+				break;
 			break;
-			case LOGOUT:
-			break;
-			case ERROR:
+			default:
+				msg->msgtype = ERROR;
+				send_err_msg(logfile_fd, client_fd, &mutex_dlog, msg);
 			break;
 		}
 		
@@ -296,14 +406,17 @@ void init_logfilefd(char * log_filename) {
 	Ftruncate(logfile_fd);
 }
 
-void init_mutexes() {
+void init_mutexes(int slots_start) {
 	//mutex initialization
 	init_mutex(&mutex_stat);
 	init_mutex(&mutex_stat_w);
-	init_mutex(&sem_job_slots);
-	init_mutex(&sem_job_items);
+	init_sem(&sem_job_slots, slots_start);
+	init_sem(&sem_job_items, 0);
 	init_mutex(&mutex_job);
 	init_mutex(&mutex_dlog);
+	for (int i = 0; i < 5; i++) {
+		init_mutex(mutex_charities + i);	
+	}
 }
 
 void init_sigint_handler() {

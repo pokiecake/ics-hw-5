@@ -99,7 +99,7 @@ int main(int argc, char *argv[]) {
         // Wait and Accept the connection from client
         reader_fd = accept(reader_listen_fd, (SA*)&client_addr, &client_addr_len);
 		//loop until sig int is called
-		while (reader_fd < 0 && sigintflag == 0) {
+		while (errno == EINTR && sigintflag == 0) {
 			reader_fd = accept(reader_listen_fd, (SA*)&client_addr, &client_addr_len);
 		}
 		if (sigintflag == 1) {
@@ -192,7 +192,7 @@ void * writer_thread(void * arg) {
 	int reterr;
 	while (1) {
 		int clientfd = accept(listenfd, (SA *)&client_addr, &client_addr_len);
-		while(clientfd == -1 && sigintflag == 0) {
+		while(errno == EINTR && sigintflag == 0) {
 			clientfd = accept(listenfd, (SA *)&client_addr, &client_addr_len);
 		}
 		if (sigintflag == 1) {

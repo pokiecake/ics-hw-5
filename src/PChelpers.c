@@ -5,9 +5,10 @@
 #include <signal.h>
 #include "PChelpers.h"
 
+//TODO !!REMOVE DURING SUBMISSION
+//#define DEBUG
 
-
-int add_donation_to_charity(message_t * msg, charity_t charities[], uint8_t max_charities) {
+int add_donation_to_charity(message_t * msg, charity_t charities[], uint8_t max_charities, uint64_t maxDonations[]) {
 	uint8_t charity_i = msg->msgdata.donation.charity;	
 	if (charity_i > max_charities || charity_i < 0) {
 		return -1;
@@ -21,6 +22,7 @@ int add_donation_to_charity(message_t * msg, charity_t charities[], uint8_t max_
 	if (req_charity->topDonation < amnt) {
 		req_charity->topDonation = amnt;
 	}
+	update_highest_dono(amnt, maxDonations, 3);
 	//increment num of donations
 	req_charity->numDonations++;
 	return 0;
@@ -84,17 +86,28 @@ void set_high_low_charities(message_t * msg, uint64_t high, uint64_t low, uint8_
 	msg->msgdata.stats.amount_low = low;
 }
 
-void kill_all_threads(list_t * thread_list, pthread_t writer_tid){
-	
+void kill_all_threads(list_t * thread_list, pthread_t cons_threads[], int num_consumers) {
+	#ifdef DEBUG
+		printf("Entered thread kill function\n");
+	#endif
 	node_t * cur = thread_list->head;
 	while(cur != NULL) {
 		pthread_t tid = *((pthread_t *)(cur->data));
+		#ifdef DEBUG
+			printf("%lu thread starting to kill\n", tid);
+		#endif
 		pthread_kill(tid, SIGINT); //possible problems with dead threads?
 		pthread_join(tid, NULL);
 		cur = cur->next;
 	}
-	pthread_kill(writer_tid, SIGINT); //possible problems with dead threads?
-	pthread_join(writer_tid, NULL);
+	int i;
+	for (i = 0; i < num_consumers; i++) {
+		#ifdef DEBUG
+			printf("%lu thread starting to kill\n", cons_threads[i]);
+		#endif
+		pthread_kill(cons_threads[i], SIGINT); //possible problems with dead threads?
+		pthread_join(cons_threads[i], NULL);
+	}
 	DeleteList(thread_list);
 }
 
@@ -139,6 +152,13 @@ void send_err_msg(int log_fd, int client_fd, sem_t * mutex_dlog, message_t * msg
 	free(log_msg);
 }
 
+void init_sem(sem_t * sem, int n) {
+	if (sem_init(sem, 0, n) == -1) {
+		fprintf(stderr, "ERROR: failed to initialize semaphore\n");
+		exit(1);
+	}
+}
+
 void init_mutex(sem_t * mutex) {
 	if (sem_init(mutex, 0, 1) == -1) {
 		fprintf(stderr, "ERROR: failed to initialize mutex\n");
@@ -148,8 +168,15 @@ void init_mutex(sem_t * mutex) {
 
 void P(sem_t * lock) {
 	if (sem_wait(lock) == -1) {
-		fprintf(stderr, "ERROR: failed to hold onto lock\n");
-		exit(1);
+		if (errno == EINTR) {
+			#ifdef DEBUG
+				fprintf(stderr, "thread %lu failed to hold onto lock\n", pthread_self());
+			#endif
+			return;
+		} else {
+			fprintf(stderr, "ERROR: failed to hold onto lock\n");
+			exit(1);
+		}
 	}
 }
 

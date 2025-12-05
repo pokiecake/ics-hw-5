@@ -115,7 +115,7 @@ int main(int argc, char *argv[]) {
 			printf("Waiting for client...\n");
 		#endif
         client_fd = accept(listen_fd, (SA*)&client_addr, &client_addr_len);
-		while (client_fd < 0 && sigint == 0) { //ignore signals that are not sigint
+		while (errno == EINTR && sigint == 0) { //ignore signals that are not sigint
 			client_fd = accept(listen_fd, (SA*)&client_addr, &client_addr_len);
 		}
 		//printf("sigint flag raised: %d\n", sigint);
@@ -355,7 +355,6 @@ void * thread(void * arg) {
 				#endif
 				//log file
 				P(&mutex_dlog);
-				log_msg;
 				asprintf(&log_msg, "%d TOP\n", clientfd);
 				write(log_fd, log_msg, strlen(log_msg));
 				//fprintf(log_fd, "%d TOP\n", clientfd);
@@ -371,7 +370,6 @@ void * thread(void * arg) {
 				close(clientfd);
 				//log file
 				P(&mutex_dlog);
-				log_msg;
 				asprintf(&log_msg, "%d LOGOUT\n", clientfd);
 				write(log_fd, log_msg, strlen(log_msg));
 				//fprintf(log_fd, "%d LOGOUT\n", clientfd);

@@ -11,7 +11,7 @@
 #include "linkedlist.h"
 // INSERT FUNCTION DECLARATIONS HERE
 
-int add_donation_to_charity(message_t * msg, charity_t charities[], uint8_t max_charities);
+int add_donation_to_charity(message_t * msg, charity_t charities[], uint8_t max_charities, uint64_t maxDonations[]);
 void join_threads(list_t * list);
 uint8_t get_charity_info(message_t * msg);
 void copy_charity(message_t * msg, charity_t * charity);
@@ -19,7 +19,7 @@ void write_max_donations(message_t * msg, uint64_t maxDonations[]);
 void update_high_low_charities(message_t * msg, charity_t charities[], size_t);
 void set_high_low_charities(message_t * msg, uint64_t high, uint64_t low, uint8_t high_ci, uint8_t low_ci);
 
-void kill_all_threads(list_t * thread_list, pthread_t writer_tid);
+void kill_all_threads(list_t * thread_list, pthread_t cons_threads[], int num_consumers);
 void update_highest_dono(uint64_t dono, uint64_t max_donos[], int size);
 void print_all_charities(charity_t charities[], uint32_t size);
 
@@ -27,6 +27,12 @@ void print_all_charities(charity_t charities[], uint32_t size);
 void print_statistics(int clientCnt, uint64_t maxDonations[]);
 
 void send_err_msg(int log_fd, int client_fd, sem_t * mutex_dlog, message_t * msg);
+
+/* Initializes a semaphore starting at n
+ * @param sem a pointer to a sem_t semaphore
+ * @param n the starting value of the semaphore
+ */
+void init_sem(sem_t * sem, int n);
 
 /* Initializes a binary mutex lock
  * @param mutex a pointer to a sem_t mutex
