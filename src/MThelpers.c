@@ -39,7 +39,8 @@ void join_threads(list_t * list) {
 	int i;
 	for (i = 0; cur != NULL; i ++, cur = next) {
 		next = cur->next;
-		int err = pthread_tryjoin_np((pthread_t)(cur->data), NULL);
+		pthread_t tid = *((pthread_t *)(cur->data));
+		int err = pthread_tryjoin_np(tid, NULL);
 		if (err == 0) {
 			RemoveByIndex(list, i);
 			i--; //removing the element will modify the following positions by -1
@@ -58,7 +59,7 @@ void V(sem_t * lock) {
 int add_donation_to_charity(message_t * msg, uint64_t * total_donor_amnt, charity_t charities[], uint8_t max_charities) {
 	uint8_t charity_i = msg->msgdata.donation.charity;
 	uint64_t amnt = msg->msgdata.donation.amount;
-	if (charity_i > max_charities || charity_i < 0) {
+	if (charity_i >= max_charities || charity_i < 0) {
 		return -1;
 	}
 	// if (charity_i > max_charities || charity_i < 0 || amnt < 0 || amnt > 255) {
@@ -67,9 +68,10 @@ int add_donation_to_charity(message_t * msg, uint64_t * total_donor_amnt, charit
 	charity_t * req_charity = charities + charity_i;	
 	//Add donation to charity
 	req_charity->totalDonationAmt += amnt;
-	if (amnt > *total_donor_amnt) {
-		*total_donor_amnt = amnt;
-	}
+	*total_donor_amnt += amnt;
+	// if (amnt > *total_donor_amnt) {
+	// 	*total_donor_amnt = amnt;
+	// }
 	//Check and change top donation
 	if (req_charity->topDonation < amnt) {
 		req_charity->topDonation = amnt;
@@ -146,7 +148,13 @@ void print_statistics(int clientCnt, uint64_t maxDonations[]) {
 void send_err_msg(int log_fd, int client_fd, sem_t * mutex_dlog, message_t * msg) {
 	msg->msgtype = ERROR;
 	write(client_fd, msg, sizeof(message_t));
+	#ifdef DEBUG
+		printf("holding file lock");
+	#endif
 	P(mutex_dlog);
+	#ifdef DEBUG
+		printf("writing to file");
+	#endif
 	//char msg[] = "%d CINFO %u\n";
 	char * log_msg;
 	asprintf(&log_msg, "%d ERROR\n", client_fd);

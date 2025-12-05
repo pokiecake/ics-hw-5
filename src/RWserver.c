@@ -6,19 +6,21 @@
 #include "linkedlist.h"
 
 /**********************DECLARE ALL LOCKS HERE BETWEEN THES LINES FOR MANUAL GRADING*************/
-sem_t mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog;
-int stat_r_cnt, char_r_cnt;
+sem_t mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog, mutex_clientCnt;
 /*
-mutex_stat = readers lock for server statistsics
-mutex_stat_w = writers lock for server statistics
-mutex_char = readers lock for charity data structs
-mutex_char_w = writers lock for charity data structs
+mutex_clientCnt = mutex for clientCnt global variable
+mutex_stat = readers lock for server statistsics (maxDonations[])
+mutex_stat_w = writers lock for server statistics (maxDonations[])
+mutex_char = readers lock for charity data structs (charities[])
+mutex_char_w = writers lock for charity data structs (charities[])
 mutex_dlog = mutex lock for log file
-
-stat_r_cnt = readers count for server statistics
-char_r_cnt = readers count for charity data structs
 */
 
+int stat_r_cnt, char_r_cnt;
+/*
+	stat_r_cnt = readers count for server statistics
+	char_r_cnt = readers count for charity data structs
+*/
 /***********************************************************************************************/
 
 // Global variables, statistics collected since server start-up
@@ -37,6 +39,7 @@ void sigint_handler(int sig) {
 }
 void * writer_thread(void * arg);
 void * reader_thread(void * arg);
+void init_mutexes();
 
 int main(int argc, char *argv[]) {
 
@@ -71,11 +74,7 @@ int main(int argc, char *argv[]) {
 	Sigaction(SIGINT, &myaction);
 
 	//mutex initialization
-	init_mutex(&mutex_stat);
-	init_mutex(&mutex_stat_w);
-	init_mutex(&mutex_char);
-	init_mutex(&mutex_char_w);
-	init_mutex(&mutex_dlog);
+	init_mutexes();
 
 	//thread id list
 	list_t * thread_list = init_T_List();
@@ -113,18 +112,25 @@ int main(int argc, char *argv[]) {
         }
         
         // INSERT SERVER ACTIONS FOR CONNECTED READER CLIENT CODE HERE
+		//increment client count
+		P(&mutex_clientCnt);
 		clientCnt++;
+		V(&mutex_clientCnt);
+		
 		//check for terminated threads and join
 		join_threads(thread_list);
+		
 		//spawn new reader thread
-		pthread_t reader_tid;
+		pthread_t * reader_tid = malloc(sizeof(pthread_t));
+		
 		//give file descriptors as payload
 		int * fds = malloc(sizeof(int) * 2);
 		fds[0] = reader_fd;
 		fds[1] = logfilefd;
-		Pthread_create(&reader_tid, NULL, reader_thread, fds);
+		Pthread_create(reader_tid, NULL, reader_thread, fds);
+		
 		//insert into list
-		InsertAtHead(thread_list, &reader_thread);
+		InsertAtHead(thread_list, reader_tid);
     }
 	print_statistics(clientCnt, maxDonations);
 	print_all_charities(charities, 5);
@@ -186,7 +192,6 @@ void * writer_thread(void * arg) {
 	//write(logfilefd, logmsg, strlen(logmsg));
 	message_t * msg = Calloc(1, sizeof(message_t));
 	char * logmsg;
-	uint64_t total_amnt = 0;
 	struct sockaddr_in client_addr;
 	unsigned int client_addr_len = sizeof(client_addr);
 	int reterr;
@@ -201,6 +206,10 @@ void * writer_thread(void * arg) {
 			}
 			break;
 		}
+		P(&mutex_clientCnt);
+		clientCnt++;
+		V(&mutex_clientCnt);
+		uint64_t total_amnt = 0;
 		int logout = 0;
 		while (logout == 0) {
 			read(clientfd, msg, sizeof(message_t));
@@ -223,7 +232,8 @@ void * writer_thread(void * arg) {
 					V(&mutex_char_w);
 	
 					if (reterr == -1) {
-						
+						send_err_msg(logfilefd, clientfd, &mutex_dlog, msg);
+						break;
 					}
 					//add to local total
 					total_amnt += msg->msgdata.donation.amount;
@@ -258,12 +268,6 @@ void * writer_thread(void * arg) {
 				break;
 				default:
 					send_err_msg(logfilefd, clientfd, &mutex_dlog, msg);
-					// write(clientfd, msg, sizeof(message_t));
-					// P(&mutex_dlog);
-					// asprintf(&logmsg, "%d ERROR\n", clientfd);
-					// write(logfilefd, logmsg, sizeof(logmsg));
-					// V(&mutex_dlog);
-					// free(logmsg);
 				break;
 				}
 		}
@@ -307,6 +311,10 @@ void * reader_thread(void * arg) {
 			case CINFO:
 				//read data into buffer
 				uint8_t req_charity_i = get_charity_info(msg);
+				if (req_charity_i < 0 || req_charity_i > 4) {
+					send_err_msg(logfilefd, clientfd, &mutex_dlog, msg);
+					break;
+				}
 				//hold charity lock
 				P(&mutex_char);
 				char_r_cnt ++;
@@ -314,8 +322,9 @@ void * reader_thread(void * arg) {
 					P(&mutex_char_w);
 				}
 				V(&mutex_char);
-				//charity_t * req_charity = charities + req_charity_i;
+				
 				msg->msgdata.charityInfo = charities[req_charity_i];
+				
 				//release lock
 				P(&mutex_char);
 				char_r_cnt --;
@@ -323,11 +332,13 @@ void * reader_thread(void * arg) {
 					V(&mutex_char_w);
 				}
 				V(&mutex_char);
+				
 				//send msg w/ charity info
 				reterr= write(clientfd, msg, sizeof(message_t));
 				if (reterr< 0) {
 					//error, sending failed
-					
+					send_err_msg(logfilefd, clientfd, &mutex_dlog, msg);
+					break;
 				}
 				//log file
 				P(&mutex_dlog);
@@ -414,6 +425,7 @@ void * reader_thread(void * arg) {
 				write(logfilefd, logmsg, strlen(logmsg));
 				//release lock
 				V(&mutex_dlog);
+				free(logmsg);
 			break;
 			default: //ERROR
 				send_err_msg(logfilefd, clientfd, &mutex_dlog, msg);
@@ -429,4 +441,14 @@ void * reader_thread(void * arg) {
 	return NULL;
 }
 
+
+void init_mutexes() {
+	//mutex initialization
+	init_mutex(&mutex_stat);
+	init_mutex(&mutex_stat_w);
+	init_mutex(&mutex_char);
+	init_mutex(&mutex_char_w);
+	init_mutex(&mutex_dlog);
+	init_mutex(&mutex_clientCnt);
+}
 

@@ -7,7 +7,7 @@
 
 int add_donation_to_charity(message_t * msg, charity_t charities[], uint8_t max_charities) {
 	uint8_t charity_i = msg->msgdata.donation.charity;	
-	if (charity_i > max_charities || charity_i < 0) {
+	if (charity_i >= max_charities || charity_i < 0) {
 		return -1;
 	}
 	uint64_t amnt = msg->msgdata.donation.amount;
@@ -29,7 +29,8 @@ void join_threads(list_t * list) {
 	int i;
 	for (i = 0; cur != NULL; i ++, cur = next) {
 		next = cur->next;
-		int err = pthread_tryjoin_np((pthread_t)(cur->data), NULL);
+		pthread_t tid = *((pthread_t *)(cur->data));
+		int err = pthread_tryjoin_np(tid, NULL);
 		if (err == 0) {
 			RemoveByIndex(list, i);
 			i--; //removing the element will modify the following positions by -1

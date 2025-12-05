@@ -20,18 +20,17 @@
 //!!Remove during testing!!
 //#define DEBUG
 // synchronization locks
-sem_t mutex_stat, mutex_stat_w, mutex_char, mutex_char_w, mutex_dlog, mutex_sigint;
+sem_t mutex_stat, mutex_stat_w, mutex_dlog;
+sem_t mutex_charities[5];
 /*
 mutex_stat - lock for stat_r_cnt
 mutex_stat_w - writers stick for server statistics
-mutex_char - lock for char_r_cnt (readers count for charity stats)
-mutex_char_w - writers stick for charity data structures
+mutex_charities[5] - mutex for each charity
 mutex_dlog - lock for log file
 */
-int stat_r_cnt = 0, char_r_cnt = 0;
+int stat_r_cnt = 0;
 /*
 stat_r_cnt = readers count for server statistics
-char_r_cnt = readers count for charity statstics
 */
 /***********************************************************************************************/
 
@@ -53,6 +52,8 @@ void sigint_handler(int sig) {
 	//V(&mutex_sigint);
 }
 
+void init_mutexes();
+
 int main(int argc, char *argv[]) {
 	
 
@@ -73,18 +74,14 @@ int main(int argc, char *argv[]) {
     }
     unsigned int port_number = atoi(argv[1]);
     char *log_filename = argv[2];
-	sem_init(&mutex_stat, 0, 1);
-	sem_init(&mutex_stat_w, 0, 1);
-	sem_init(&mutex_char, 0, 1);
-	sem_init(&mutex_char_w, 0, 1);
-	sem_init(&mutex_dlog, 0, 1);
 
     // INSERT SERVER INITIALIZATION CODE HERE
 	//initialize data structures
 	clientCnt = 0;
 	int i = 0;
-	for (i = 0; i < 3; i++)
+	for (i = 0; i < 3; i++) {
 		maxDonations[i] = 0;
+	}
 	
 	// initialize thread linked list
 	list_t * thread_list = init_T_List();		
@@ -95,6 +92,8 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "File could not open\n");
 		exit(2);
 	}
+	//initialize mutexes
+	init_mutexes();
 	//remove previous logs 
 	Ftruncate(log_file_fd);
 	// signal handler
@@ -150,13 +149,14 @@ int main(int argc, char *argv[]) {
 		//!!Thread id probably not removed from list entirely
 		//block sigint?
 		//create thread
-		pthread_t spawned_tid;
+		pthread_t * reader_tid = malloc(sizeof(pthread_t));
+		//pthread_t reader_tid;
 		int * arg = malloc(sizeof(int) * 2);
 		*arg = client_fd;
 		*(arg + 1) = log_file_fd;
-		pthread_create(&spawned_tid, NULL, thread, arg);
+		pthread_create(reader_tid, NULL, thread, arg);
 		//add thread id to linked list
-		InsertAtHead(thread_list, (void *)spawned_tid);
+		InsertAtHead(thread_list, reader_tid);
 
     }
 	//final output
@@ -245,12 +245,24 @@ void * thread(void * arg) {
 				#ifdef DEBUG
 					printf("%d handling Donate\n", clientfd);
 				#endif
+				uint8_t charity_i = message->msgdata.donation.charity;
+				if (charity_i >= 5 || charity_i < 0) {
+					send_err_msg(log_fd, clientfd, &mutex_dlog, message);
+					break;
+				}
 				//hold lock		
-				P(&mutex_char_w);	
+				//P(&mutex_char_w);	
+				P(mutex_charities + charity_i);
+				//P(&mutex_charities[charity_i]);
 				//Update donation amnt
 				ret_err = add_donation_to_charity(message, &max_amnt, charities, 5);
 				//release lock
-				V(&mutex_char_w);
+				//V(&mutex_char_w);
+				V(mutex_charities + charity_i);
+				//V(&mutex_charities[charity_i]);
+				#ifdef DEBUG
+					printf("%d added donation\n", clientfd);
+				#endif
 				if (ret_err < 0) {
 					send_err_msg(log_fd, clientfd, &mutex_dlog, message);
 					//error, sending failed
@@ -259,21 +271,19 @@ void * thread(void * arg) {
 				//send msg !! 
 				ret_err = write(clientfd, message, MSG_SIZE);
 				if (ret_err < 0) {
-					//error, sending failed
+					//fatal error, sending failed
+					fprintf(stderr, "ERROR: Write to client %u failed\n", clientfd);
+					exit(1);
 				}
-				uint8_t charity_i = message->msgdata.donation.charity;
 				uint64_t amnt = message->msgdata.donation.amount;
-				//log file !!
-				P(&mutex_dlog);
-				log_msg;
+				
+				//create log msg
 				asprintf(&log_msg, "%d DONATE %u %lu\n", clientfd, charity_i, amnt);
-				//char msg[] = "DONATE";
-				// char charity_msg = 
-				// ltostr(charity_i, charity_msg);
-				// "%d DONATE %u %ul\n";
+				//log file
+				P(&mutex_dlog);
 				write(log_fd, log_msg, strlen(log_msg));
-				//fprintf(log_fd, "%d DONATE %u %ul\n", clientfd, charity_i, amnt);
 				V(&mutex_dlog);
+				
 				free(log_msg);
 				break;
 			//CINFO
@@ -282,39 +292,30 @@ void * thread(void * arg) {
 					printf("%d handling Cinfo\n", clientfd);
 				#endif
 				//read data into buffer
-				uint8_t req_charity_i = get_charity_info(message); //todo!!
-				if (req_charity_i < 0 || req_charity_i > 5) {
+				uint8_t req_charity_i = get_charity_info(message);
+				if (req_charity_i < 0 || req_charity_i > 4) {
 					send_err_msg(log_fd, clientfd, &mutex_dlog, message);
 					break;
 				}
 				//hold charity lock
-				P(&mutex_char);
-				char_r_cnt ++;
-				if (char_r_cnt == 1) {
-					P(&mutex_char_w);
-				}
-				V(&mutex_char);
-				//charity_t * req_charity = charities + req_charity_i;
+				P(&mutex_charities[req_charity_i]);
 				message->msgdata.charityInfo = charities[req_charity_i];
 				//release lock
-				P(&mutex_char);
-				char_r_cnt --;
-				if (char_r_cnt == 0) {
-					V(&mutex_char_w);
-				}
-				V(&mutex_char);
+				V(&mutex_charities[req_charity_i]);
 				//send msg w/ charity info
 				ret_err= write(clientfd, message, MSG_SIZE);
 				if (ret_err< 0) {
 					//error, sending failed
 					
 				}
+				
+				//create log msg
+				asprintf(&log_msg, "%d CINFO %u\n", clientfd, req_charity_i);
 				//log file
 				P(&mutex_dlog);
-				//char msg[] = "%d CINFO %u\n";
-				asprintf(&log_msg, "%d CINFO %u\n", clientfd, req_charity_i);
+				
 				write(log_fd, log_msg, strlen(log_msg));
-				//fprintf(log_fd, "%d CINFO %u\n", clientfd, req_charity_i);
+				
 				V(&mutex_dlog);
 				free(log_msg);
 				break;
@@ -353,12 +354,15 @@ void * thread(void * arg) {
 				#ifdef DEBUG
 					printf("\t%d has written to client and preparting log\n", clientfd);
 				#endif
+				
+				//create log msg
+				asprintf(&log_msg, "%d TOP\n", clientfd);
+				
 				//log file
 				P(&mutex_dlog);
-				asprintf(&log_msg, "%d TOP\n", clientfd);
 				write(log_fd, log_msg, strlen(log_msg));
-				//fprintf(log_fd, "%d TOP\n", clientfd);
 				V(&mutex_dlog);
+				
 				free(log_msg);
 				break;
 			//LOGOUT
@@ -372,14 +376,15 @@ void * thread(void * arg) {
 				P(&mutex_dlog);
 				asprintf(&log_msg, "%d LOGOUT\n", clientfd);
 				write(log_fd, log_msg, strlen(log_msg));
-				//fprintf(log_fd, "%d LOGOUT\n", clientfd);
 				V(&mutex_dlog);
+				
 				//update max donations 
 				P(&mutex_stat_w);
 				if (max_amnt > maxDonations[2]) {
 					update_highest_dono(max_amnt, maxDonations, 3);
 				}
 				V(&mutex_stat_w);
+				
 				logout = 1;
 				free(log_msg);
 				break;
@@ -399,4 +404,15 @@ void * thread(void * arg) {
 	
 	free(message);
 	return NULL;
+}
+
+void init_mutexes() {
+	sem_init(&mutex_stat, 0, 1);
+	sem_init(&mutex_stat_w, 0, 1);
+	int i;
+	for (i = 0; i < 5; i++) {
+		sem_init(mutex_charities + i, 0, 1);
+		//sem_init(&mutex_charities[i], 0, 1);
+	}
+	sem_init(&mutex_dlog, 0, 1);
 }

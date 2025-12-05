@@ -15,6 +15,15 @@ update usage statement
 sem_t mutex_stat, mutex_stat_w, sem_job_slots, sem_job_items, mutex_job, mutex_dlog;
 int stat_r_cnt;
 sem_t mutex_charities[5];
+/*
+mutex_stat - lock for stat_r_cnt
+mutex_stat_w - writers stick for server statistics
+mutex_charities[5] - mutex for each charity
+sem_job_slots - semaphore for # of available slots
+sem_job_items - semaphore for # of items 
+mutex_job - mutex lock for job_t buffer[]
+mutex_dlog - lock for log file
+*/
 /***********************************************************************************************/
 typedef struct {
 	int size;
@@ -129,14 +138,14 @@ int main(int argc, char *argv[]) {
         // INSERT SERVER ACTIONS FOR CONNECTED CLIENT CODE HERE
 		join_threads(prod_thread_list);
 		//spawn prod thread
-		pthread_t tid;
+		pthread_t * reader_tid = malloc(sizeof(pthread_t));
 		int * arg = malloc(sizeof(int));
 		*arg = client_fd;
-		Pthread_create(&tid, NULL, thread_prod, arg);
+		Pthread_create(reader_tid, NULL, thread_prod, arg);
 		//increment client count
 		clientCnt++;
 		//insert thread into list
-		InsertAtHead(prod_thread_list, &tid);
+		InsertAtHead(prod_thread_list, reader_tid);
     }
 
     //close(listen_fd);
@@ -198,7 +207,7 @@ void * thread_prod(void * arg) {
 	free(arg);
 	
 	//read msg from client
-	message_t * msg = malloc(sizeof(message_t));
+	message_t * msg = Calloc(1, sizeof(message_t));
 
 	while (1) {
 		
@@ -307,8 +316,14 @@ void * thread_cons(void * arg) {
 
 		switch(msg->msgtype) {
 			case DONATE:
+				uint8_t charity_i = msg->msgdata.donation.charity;
+				uint64_t amnt = msg->msgdata.donation.amount;
+				if (charity_i >= 5 || charity_i < 0) {
+					send_err_msg(logfile_fd, client_fd, &mutex_dlog, msg);
+					break;
+				}
 				//get address of the lock for the requested charity
-				char_lock = &mutex_charities[get_charity_info(msg)];
+				char_lock = &mutex_charities[charity_i];
 				//lock requested charity
 				P(char_lock);
 				//add donation to charity
@@ -323,12 +338,13 @@ void * thread_cons(void * arg) {
 			
 				//send msg to client
 				write(client_fd, msg, sizeof(message_t));
+
+				//create log msg
+				asprintf(&logmsg, "%lu %d DONATE %u %lu\n", self_tid, client_fd, charity_i, amnt);
+				
 				//lock log
 				P(&mutex_dlog);
 				//log file
-				uint8_t charity_i = msg->msgdata.donation.charity;
-				uint64_t amnt = msg->msgdata.donation.amount;
-				asprintf(&logmsg, "%lu %d DONATE %u %lu\n", self_tid, client_fd, charity_i, amnt); //not thread safe?
 				write(logfile_fd, logmsg, strlen(logmsg));
 				//release log
 				V(&mutex_dlog);
@@ -336,6 +352,10 @@ void * thread_cons(void * arg) {
 			break;
 			case CINFO:
 				uint8_t req_charity_i = get_charity_info(msg);
+				if (req_charity_i < 0 || req_charity_i > 4) {
+					send_err_msg(logfile_fd, client_fd, &mutex_dlog, msg);
+					break;
+				}
 				char_lock = &mutex_charities[req_charity_i];
 				
 				//lock requested charity
@@ -350,15 +370,15 @@ void * thread_cons(void * arg) {
 					//error, sending failed
 					
 				}
+				//create log msg
+				asprintf(&logmsg, "%d CINFO %u\n", client_fd, req_charity_i);
+				
 				//log file
 				P(&mutex_dlog);
-				//char msg[] = "%d CINFO %u\n";
-				asprintf(&logmsg, "%d CINFO %u\n", client_fd, req_charity_i);
 				write(logfile_fd, logmsg, strlen(logmsg));
-				//fprintf(log_fd, "%d CINFO %u\n", clientfd, req_charity_i);
 				V(&mutex_dlog);
-				free(logmsg);
 				
+				free(logmsg);
 			break;
 			case TOP:
 				//hold server lock
@@ -379,13 +399,15 @@ void * thread_cons(void * arg) {
 				V(&mutex_stat);
 				//send msg
 				write(client_fd, msg, sizeof(message_t));
+
+				//create log msg
+				asprintf(&logmsg, "%d TOP\n", client_fd);
 				
 				//log file
 				P(&mutex_dlog);
-				asprintf(&logmsg, "%d TOP\n", client_fd);
 				write(logfile_fd, logmsg, strlen(logmsg));
-				//fprintf(log_fd, "%d TOP\n", clientfd);
 				V(&mutex_dlog);
+				
 				free(logmsg);
 				break;
 			break;
